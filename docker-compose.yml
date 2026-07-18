@@ -1,0 +1,33 @@
+# Hermes Agent Docker Compose 配置
+#
+# 用途：在容器内运行 Hermes Agent，便于快速体验而无需在宿主机安装 Python 依赖。
+#
+# 使用方式：
+#   docker compose up -d
+#   docker compose exec hermes python examples/simple_agent.py
+#   docker compose exec hermes agent run "帮我写一个排序算法" --echo
+#
+# 注意：
+#   1. 容器启动时会自动执行 `pip install -e ".[dev]"`，安装项目依赖。
+#   2. 容器内调用 sandbox_exec 需要挂载宿主机的 Docker socket。
+#   3. Linux/Mac 默认 socket 路径为 /var/run/docker.sock；Windows 用户需根据
+#      Docker Desktop 的 WSL2/Hyper-V 后端调整路径，例如：
+#      - //var/run/docker.sock:/var/run/docker.sock
+#   4. 需要设置 OPENAI_API_KEY 环境变量才能调用真实 LLM；示例使用 EchoClient，
+#      不强制要求 API key。
+
+services:
+  hermes:
+    image: python:3.11-slim
+    container_name: hermes-agent
+    volumes:
+      - .:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .hermes:/app/.hermes
+    working_dir: /app
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    command:
+      - sh
+      - -c
+      - "pip install -e '.[dev]' && tail -f /dev/null"

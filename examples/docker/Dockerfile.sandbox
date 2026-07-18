@@ -1,0 +1,7 @@
+# Hermes 预置沙箱镜像（S3b 场景用，模式 1：预置依赖 + 运行时禁网）
+# 构建（经 daocloud 镜像源拉取基础镜像）：
+#   docker build -t hermes-sandbox:latest -f examples/docker/Dockerfile.sandbox examples/docker
+FROM docker.m.daocloud.io/library/python:3.11-slim
+
+# 预置常用数据科学依赖（构建期联网安装，运行时无需网络）
+RUN pip install --no-cache-dir numpy pandas

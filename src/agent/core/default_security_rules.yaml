@@ -1,0 +1,207 @@
+# Phase 9 默认安全策略规则集
+#
+# 本文件由项目维护，作为开箱即用的宽松默认规则集。
+# 当 SecurityConfig.enabled=True 且未提供自定义规则时，
+# PolicyEngine 会加载本文件中的规则。
+#
+# 用户可以通过 config.yaml 中的 security.rules 完全自定义规则；
+# 自定义规则会覆盖本默认规则集。
+#
+# 注意：file/path 类型的 subject 会先归一化（反斜杠转 /、统一小写），
+# 因此自定义 file/path 规则的 pattern 请使用小写路径。
+
+rules:
+  - resource: tool
+    operation: execute
+    pattern: sandbox_exec
+    action: allow
+    reason: 沙箱执行是核心能力
+    priority: 10
+    use_regex: false
+
+  - resource: sandbox/code
+    operation: execute
+    pattern: "import\\s+(os|subprocess|socket)"
+    action: deny
+    reason: 禁止高风险系统调用模块
+    priority: 100
+    use_regex: true
+
+  - resource: sandbox/code
+    operation: execute
+    pattern: "from\\s+(os|subprocess|socket)(\\.\\w+)?\\s+import"
+    action: deny
+    reason: 禁止 from 导入高风险系统调用模块
+    priority: 100
+    use_regex: true
+
+  - resource: sandbox/code
+    operation: execute
+    pattern: "__import__\\s*\\("
+    action: deny
+    reason: 禁止动态导入
+    priority: 90
+    use_regex: true
+
+  - resource: sandbox/code
+    operation: execute
+    pattern: "\\b(importlib)\\b"
+    action: deny
+    reason: 禁止运行时导入操作
+    priority: 85
+    use_regex: true
+
+  - resource: sandbox/code
+    operation: execute
+    pattern: "\\b(exec|eval|compile)\\s*\\("
+    action: deny
+    reason: 禁止代码执行/编译内置函数
+    priority: 90
+    use_regex: true
+
+  - resource: sandbox/code
+    operation: execute
+    pattern: "\\b(socket|urllib|urllib2|requests|httpx|aiohttp)\\b"
+    action: deny
+    reason: 禁止沙箱内网络访问
+    priority: 80
+    use_regex: true
+
+  - resource: file/path
+    operation: read
+    pattern: /etc/passwd
+    action: deny
+    reason: 禁止读取系统用户文件
+    priority: 100
+    use_regex: false
+
+  - resource: file/path
+    operation: read
+    pattern: ".*\\.ssh.*"
+    action: deny
+    reason: 禁止读取 SSH 密钥相关路径
+    priority: 90
+    use_regex: true
+
+  - resource: file/path
+    operation: read
+    pattern: windows/system32/config/sam
+    action: deny
+    reason: 禁止读取 Windows 系统安全账户数据库
+    priority: 100
+    use_regex: false
+
+  - resource: file/path
+    operation: read
+    pattern: windows/system32/config/system
+    action: deny
+    reason: 禁止读取 Windows 系统注册表文件
+    priority: 100
+    use_regex: false
+
+  - resource: file/path
+    operation: read
+    pattern: windows/system32/config/security
+    action: deny
+    reason: 禁止读取 Windows 安全数据库
+    priority: 100
+    use_regex: false
+
+  - resource: file/path
+    operation: read
+    pattern: windows/repair/sam
+    action: deny
+    reason: 禁止读取 Windows SAM 备份
+    priority: 100
+    use_regex: false
+
+  - resource: file/path
+    operation: write
+    pattern: /etc/passwd
+    action: deny
+    reason: 禁止写入系统用户文件
+    priority: 100
+    use_regex: false
+
+  - resource: file/path
+    operation: write
+    pattern: ".*\\.ssh.*"
+    action: deny
+    reason: 禁止写入 SSH 密钥相关路径
+    priority: 90
+    use_regex: true
+
+  - resource: file/path
+    operation: write
+    pattern: windows/system32/config/sam
+    action: deny
+    reason: 禁止写入 Windows 系统安全账户数据库
+    priority: 100
+    use_regex: false
+
+  - resource: file/path
+    operation: write
+    pattern: windows/system32/config/system
+    action: deny
+    reason: 禁止写入 Windows 系统注册表文件
+    priority: 100
+    use_regex: false
+
+  - resource: file/path
+    operation: write
+    pattern: windows/system32/config/security
+    action: deny
+    reason: 禁止写入 Windows 安全数据库
+    priority: 100
+    use_regex: false
+
+  - resource: file/path
+    operation: write
+    pattern: windows/repair/sam
+    action: deny
+    reason: 禁止写入 Windows SAM 备份
+    priority: 100
+    use_regex: false
+
+  # TD-006：file/path write 的 workspace 边界三件套。
+  # 优先级关系：敏感路径 deny（90-100）> .. 逃逸 deny（95 区间内取 95）
+  #             > workspace allow（50）> catch-all deny（1）。
+  - resource: file/path
+    operation: write
+    pattern: "\\.\\."
+    action: deny
+    reason: 禁止写入包含 .. 的逃逸路径
+    priority: 95
+    use_regex: true
+
+  - resource: file/path
+    operation: write
+    pattern: "^/workspace(/|$)"
+    action: allow
+    reason: 允许写入 workspace 边界内路径
+    priority: 50
+    use_regex: true
+
+  - resource: file/path
+    operation: write
+    pattern: ".*"
+    action: deny
+    reason: 默认只允许写入 /workspace 边界内，其余路径拒绝
+    priority: 1
+    use_regex: true
+
+  - resource: memory/category
+    operation: write
+    pattern: environment
+    action: allow
+    reason: 允许写入环境记忆
+    priority: 10
+    use_regex: false
+
+  - resource: memory/category
+    operation: write
+    pattern: preferences
+    action: allow
+    reason: 允许写入用户偏好
+    priority: 10
+    use_regex: false
