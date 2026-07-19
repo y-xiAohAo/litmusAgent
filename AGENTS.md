@@ -1,4 +1,4 @@
-# AGENTS.md — Hermes Agent 项目规则（最小路由版）
+# AGENTS.md — Litmus Agent 项目规则（最小路由版）
 
 > 本文件只写路由、底线、禁止项和恢复规则，不复制完整 Skill / Spec。
 > 完整协议见全局 skill：`sdd-riper-one` / `sdd-riper-one-light`（`~/.kimi/skills/`）。

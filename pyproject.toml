@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agent"
 version = "0.1.0"
-description = "Code Sandbox Agent — LLM-powered agent with secure code execution"
+description = "Litmus Agent — self-correcting code sandbox agent framework"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}

@@ -323,7 +323,7 @@ def render_report(results: list[ScenarioResult]) -> str:
 def build_parser() -> argparse.ArgumentParser:
     """构造套件参数解析器。"""
     parser = argparse.ArgumentParser(
-        prog="e2e_suite", description="Hermes Agent 真实 LLM 端到端联调场景套件。"
+        prog="e2e_suite", description="Litmus Agent 真实 LLM 端到端联调场景套件。"
     )
     parser.add_argument(
         "--only",

@@ -1,6 +1,6 @@
 """Phase 10.9：真实 LLM 端到端演示脚本。
 
-本脚本用于展示 Hermes Agent 在真实 LLM 驱动下的完整工作流：
+本脚本用于展示 Litmus Agent 在真实 LLM 驱动下的完整工作流：
   1. 接收一个编程/数据分析任务。
   2. 调用 LLM 决策。
   3. 在 Docker 沙箱中执行代码（可选）。
@@ -51,7 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
     """构造 Demo 参数解析器。"""
     parser = argparse.ArgumentParser(
         prog="demo_real_llm",
-        description="Hermes Agent 真实 LLM 端到端演示。",
+        description="Litmus Agent 真实 LLM 端到端演示。",
     )
     parser.add_argument(
         "--prompt",
@@ -154,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         mode = f"真实 LLM：{effective_model} @ {effective_base_url}"
 
-    _print_header("Hermes Agent 端到端演示")
+    _print_header("Litmus Agent 端到端演示")
     print(f"运行模式：{mode}")
     print(f"任务：{args.prompt}")
 

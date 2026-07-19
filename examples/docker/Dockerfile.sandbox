@@ -1,4 +1,4 @@
-# Hermes 预置沙箱镜像（S3b 场景用，模式 1：预置依赖 + 运行时禁网）
+# Litmus 预置沙箱镜像（S3b 场景用，模式 1：预置依赖 + 运行时禁网）
 # 构建（经 daocloud 镜像源拉取基础镜像）：
 #   docker build -t hermes-sandbox:latest -f examples/docker/Dockerfile.sandbox examples/docker
 FROM docker.m.daocloud.io/library/python:3.11-slim

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Docker 环境一键检查与镜像准备脚本。
 
-本脚本用于在运行 Hermes Agent 前检查 Docker daemon 是否可达，并确保
+本脚本用于在运行 Litmus Agent 前检查 Docker daemon 是否可达，并确保
 默认沙箱镜像 ``python:3.11-slim`` 已提前拉取到本地。
 
 使用方式：
@@ -68,7 +68,7 @@ def ensure_image(
 def build_parser() -> argparse.ArgumentParser:
     """构造命令行参数解析器。"""
     parser = argparse.ArgumentParser(
-        description="检查 Docker 环境并准备 Hermes Agent 默认沙箱镜像。",
+        description="检查 Docker 环境并准备 Litmus Agent 默认沙箱镜像。",
     )
     parser.add_argument(
         "--image",

@@ -1,4 +1,4 @@
-# Progress Spec — Hermes Agent 跨会话开发进度
+# Progress Spec — Litmus Agent 跨会话开发进度
 
 > **本文件是跨会话开发的“唯一真相源”。**
 > 

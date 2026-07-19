@@ -1,6 +1,6 @@
 """Agent 主 CLI。
 
-提供命令行入口，使用户无需编写 Python 脚本即可运行 Hermes Agent。
+提供命令行入口，使用户无需编写 Python 脚本即可运行 Litmus Agent。
 当前仅实现 argparse 骨架与核心子命令；Rich 美化、交互模式、Docker
 一键启动等由后续 Task 负责。
 """
@@ -27,7 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     """构造 Agent 主 CLI 参数解析器。"""
     parser = argparse.ArgumentParser(
         prog="agent",
-        description="Hermes Agent —— 具备自我纠错能力的代码沙箱 Agent。",
+        description="Litmus Agent —— 具备自我纠错能力的代码沙箱 Agent。",
     )
     parser.add_argument(
         "--version",

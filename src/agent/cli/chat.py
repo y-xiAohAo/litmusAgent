@@ -69,7 +69,7 @@ def _render_info(message: str, plain: bool = False) -> None:
 
 def _render_greeting(plain: bool = False) -> None:
     """渲染进入交互模式时的欢迎信息。"""
-    greeting = "进入 Hermes Agent 交互模式。输入 /help 查看命令，输入 /quit 退出。"
+    greeting = "进入 Litmus Agent 交互模式。输入 /help 查看命令，输入 /quit 退出。"
     _render_info(greeting, plain=plain)
 
 

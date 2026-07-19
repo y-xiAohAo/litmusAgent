@@ -1,6 +1,6 @@
 # 评测日志（Evaluation Log）
 
-> **本文件是 Hermes Agent 项目的“实验记录本”。**
+> **本文件是 Litmus Agent 项目的“实验记录本”。**
 >
 > 用途：
 > 1. 记录每次真实 LLM 端到端测试的结果。

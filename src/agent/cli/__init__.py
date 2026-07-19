@@ -1,4 +1,4 @@
-"""Hermes CLI 子包。
+"""Litmus CLI 子包。
 
 - `agent_cli.main`: Agent 主 CLI（Phase 10.1）
 - `memory_cli.main`: 记忆管理 CLI（Phase 8.4）

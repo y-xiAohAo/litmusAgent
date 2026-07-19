@@ -1,4 +1,4 @@
-"""Hermes Agent Web UI —— 基于 FastAPI 的最小聊天界面。
+"""Litmus Agent Web UI —— 基于 FastAPI 的最小聊天界面。
 
 设计原则：
   1. 不依赖前端构建工具，纯 HTML + 少量 JS。
@@ -26,7 +26,7 @@ from agent.core.types import Message, ToolCall
 from agent.llm import EchoClient, OpenAIClient
 
 app = FastAPI(
-    title="Hermes Agent Web UI",
+    title="Litmus Agent Web UI",
     description="一个用于展示多轮对话、工具调用和沙箱执行的极简 Web 界面。",
 )
 

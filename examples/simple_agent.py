@@ -28,7 +28,7 @@ async def main() -> None:
 
     def greet(name: str) -> str:
         """按名字向用户打招呼。"""
-        return f"你好，{name}！欢迎使用 Hermes Agent 框架。"
+        return f"你好，{name}！欢迎使用 Litmus Agent 框架。"
 
     agent.tools.register(
         ToolSpec(

@@ -1,4 +1,4 @@
-# CODEMAP — Hermes Agent 项目代码地图
+# CODEMAP — Litmus Agent 项目代码地图
 
 > 本文件由 AI 代理在 2026-07-02 生成，2026-07-12 更新。用于快速理解项目结构、模块职责和开发边界。
 > 生成时项目状态：Phase 6 已完成；229 个测试通过，0 失败，mypy 零错误，ruff 零错误。
@@ -10,7 +10,7 @@
 
 | 项目 | 说明 |
 |------|------|
-| 名称 | Hermes Agent / Code Sandbox Agent |
+| 名称 | Litmus Agent / Code Sandbox Agent |
 | 定位 | 具备自我纠错能力的 LLM Agent 框架：写代码 → 执行 → 观察结果 → 修正 → 交付产物 |
 | 当前路径 | `D:\djh\hermes\project1` |
 | Python | >= 3.10，建议使用 3.11 |

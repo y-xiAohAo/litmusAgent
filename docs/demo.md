@@ -1,6 +1,6 @@
 # Demo 指南
 
-本文件说明如何运行 Hermes Agent 的端到端演示脚本。
+本文件说明如何运行 Litmus Agent 的端到端演示脚本。
 
 ## 脚本位置
 

@@ -1,6 +1,6 @@
 # 配置指南
 
-Hermes Agent 使用 YAML 文件管理配置，并通过 [Pydantic](../src/agent/config.py) 进行类型校验。本文档详细说明每个配置字段的含义、默认值与使用建议。
+Litmus Agent 使用 YAML 文件管理配置，并通过 [Pydantic](../src/agent/config.py) 进行类型校验。本文档详细说明每个配置字段的含义、默认值与使用建议。
 
 ---
 

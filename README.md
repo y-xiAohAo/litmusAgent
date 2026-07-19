@@ -1,8 +1,8 @@
-# Hermes Agent
+# Litmus Agent
 
 > 具备自我纠错能力的代码沙箱 Agent：让 LLM 写代码、在隔离沙箱中执行、观察结果、修正并交付产物。
 
-Hermes Agent 是一个面向代码生成与执行的 LLM Agent 框架。它把"计划 → 写代码 → 运行 → 观察 → 修正"的循环封装成可配置、可观测、可安全的系统，让 LLM 不仅能生成代码，还能真正跑起来、看到结果、自己修 bug。
+Litmus Agent 是一个面向代码生成与执行的 LLM Agent 框架。它把"计划 → 写代码 → 运行 → 观察 → 修正"的循环封装成可配置、可观测、可安全的系统，让 LLM 不仅能生成代码，还能真正跑起来、看到结果、自己修 bug。
 
 ## 核心特性
 
@@ -23,7 +23,7 @@ Hermes Agent 是一个面向代码生成与执行的 LLM Agent 框架。它把"�
 
 ```bash
 git clone <repo-url>
-cd hermes-agent
+cd litmusAgent
 pip install -e ".[dev]"
 ```
 
@@ -77,7 +77,7 @@ if __name__ == "__main__":
 
 ## Docker 一键启动
 
-如果你希望在容器内运行 Hermes Agent，可以使用项目提供的 Docker Compose 配置：
+如果你希望在容器内运行 Litmus Agent，可以使用项目提供的 Docker Compose 配置：
 
 ```bash
 # 检查 Docker 环境并拉取默认沙箱镜像
@@ -95,7 +95,7 @@ docker compose exec hermes agent run "帮我写一个快速排序算法" --echo
 ## 项目结构
 
 ```
-hermes-agent/
+litmusAgent/
 ├── src/agent/              # 核心源码
 │   ├── cli/                # CLI 实现（agent run / agent chat / agent config）
 │   ├── config.py           # YAML 配置系统

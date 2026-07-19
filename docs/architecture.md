@@ -1,12 +1,12 @@
-# Hermes Agent 架构说明
+# Litmus Agent 架构说明
 
-本文档用 ASCII 图展示 Hermes Agent 的核心组件、数据流与一次完整执行过程，帮助你快速理解系统设计。
+本文档用 ASCII 图展示 Litmus Agent 的核心组件、数据流与一次完整执行过程，帮助你快速理解系统设计。
 
 ---
 
 ## 组件架构
 
-Hermes Agent 采用分层设计：CLI 面向用户，Agent Core 编排主循环，ToolRegistry 管理工具，沙箱层负责隔离执行，记忆与安全作为可插拔扩展。
+Litmus Agent 采用分层设计：CLI 面向用户，Agent Core 编排主循环，ToolRegistry 管理工具，沙箱层负责隔离执行，记忆与安全作为可插拔扩展。
 
 ```
 ┌─────────────────────────────────────────────────────────────┐

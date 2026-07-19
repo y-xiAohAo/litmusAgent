@@ -1,6 +1,6 @@
 # 使用指南
 
-本文档面向最终用户，介绍如何通过命令行（CLI）和 Python API 使用 Hermes Agent。
+本文档面向最终用户，介绍如何通过命令行（CLI）和 Python API 使用 Litmus Agent。
 
 - 想 5 分钟快速上手？先看 [README.md](../README.md)。
 - 想了解每个配置字段的含义？请阅读 [configuration.md](configuration.md)。
@@ -10,7 +10,7 @@
 
 ## CLI 使用
 
-安装完成后，即可通过 `agent` 命令调用 Hermes Agent：
+安装完成后，即可通过 `agent` 命令调用 Litmus Agent：
 
 ```bash
 # 查看版本

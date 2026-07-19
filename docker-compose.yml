@@ -1,6 +1,6 @@
-# Hermes Agent Docker Compose 配置
+# Litmus Agent Docker Compose 配置
 #
-# 用途：在容器内运行 Hermes Agent，便于快速体验而无需在宿主机安装 Python 依赖。
+# 用途：在容器内运行 Litmus Agent，便于快速体验而无需在宿主机安装 Python 依赖。
 #
 # 使用方式：
 #   docker compose up -d

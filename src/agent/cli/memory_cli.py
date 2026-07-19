@@ -38,7 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     """构造 CLI 参数解析器。"""
     parser = argparse.ArgumentParser(
         prog=PROG,
-        description="管理 Hermes 长期记忆（JSONL 文件目录）。",
+        description="管理 Litmus 长期记忆（JSONL 文件目录）。",
     )
     parser.add_argument(
         "--config",
