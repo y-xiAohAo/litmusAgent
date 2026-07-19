@@ -3,7 +3,7 @@
 > **SDD-RIPER-ONE 产物**：本文件是 Hermes Agent 当前技术债的“唯一真相源”。  
 > **原则**：`No Spec, No Code`。本清单中的任何一项进入 `Execute` 阶段前，必须先被选中并产出/细化对应 Spec，再经过 `Plan Approved` 门禁。  
 > **维护规则**：每完成一项技术债修复，必须同步更新本文件状态、相关测试数与文档（`docs/progress-spec.md`、`docs/session-context.md`、`docs/evaluation-log.md`、`CODEMAP.md`）。  
-> **最后更新**：2026-07-04
+> **最后更新**：2026-07-19
 
 ---
 
@@ -21,6 +21,8 @@
 | TD-008 | Web UI / CLI 未接入写操作人工确认 | — | 🟡 低-中 | ✅ 已完成（2026-07-18，CLI；Web UI 留待后续单元） | ❌ 否 | 1-2 天 |
 | TD-009 | Phase 8.4 长期记忆增强未实现 | — | 🟡 低 | ✅ 已关闭（2026-07-18 核实：Phase 8.4 已交付，验收全过） | ❌ 否 | 2-3 天 |
 | TD-010 | 沙箱网络策略增强（两阶段网络 + `network_mode` 配置化） | — | 🟡 低-中 | ⏳ 候选（2026-07-18 联调讨论登记） | ⚠️ 间接（S3 类场景） | 0.5-1 天 |
+| TD-011 | 默认门禁套件环境不确定性（`OPENAI_*` 污染 + web 测试隐性真实调用） | — | 🟠 中 | ✅ 已完成（2026-07-19，`tests/conftest.py` 全局清理） | ❌ 否 | 0.5 天 |
+| TD-012 | `requirements.txt` 与 `pyproject.toml` 依赖漂移（缺 fastapi/uvicorn/jinja2） | — | 🟡 低 | ✅ 已完成（2026-07-19） | ❌ 否 | 0.1 天 |
 
 ---
 
@@ -441,6 +443,39 @@ Phase 8.1~8.3 已实现长期记忆存储、注入、记录。Phase 8.4 规划�
 - CLI 命令可列出/查看/删除/反馈记忆条目。
 - 反馈后注入排序发生变化。
 - Markdown 导出文件人类可读。
+
+---
+
+### TD-011：默认门禁套件环境不确定性
+
+#### 背景
+
+宿主机设置用户级 `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` 后，EVAL-012 环境变量覆盖机制（故意特性）使默认配置变为 DeepSeek，导致 `test_cli_config_default_plain/rich` 断言 `gpt-4o` 失败；`test_web_ui.py` chat 测试在有真实 key 时**意外发起真实 API 调用**（烧配额），并在 Windows ProactorEventLoop 下 httpx TLS 关闭崩溃（"Event loop is closed"）。门禁套件结果取决于机器环境，丧失确定性。
+
+#### 界定
+
+债 = 默认套件不确定性 + 隐性真实调用；真实 LLM 测试能力本身**不是债**，由显式通道 `examples/e2e_suite.py` 承载（独立脚本，不经 pytest conftest）。
+
+#### 修复记录
+
+- **日期**：2026-07-19
+- **方案**：新增 `tests/conftest.py`，function 级 autouse fixture 用 monkeypatch 清理三个 `OPENAI_*` 变量；既有显式 `setenv`/`delenv` 用例顺序兼容（先清后设）。
+- **验证证据**：污染环境 678 passed, 1 skipped；干净环境 678 passed, 1 skipped；`ruff check src/ tests/` 全绿。
+- **Feature Spec**：`mydocs/specs/2026-07-19_16-59_test-env-isolation.md`
+
+---
+
+### TD-012：`requirements.txt` 与 `pyproject.toml` 依赖漂移
+
+#### 背景
+
+`pyproject.toml` 的 web UI 运行依赖（`fastapi>=0.110.0`、`uvicorn[standard]>=0.27.0`、`jinja2>=3.1.0`）未同步到 `requirements.txt`，按后者安装将得到残缺环境。
+
+#### 修复记录
+
+- **日期**：2026-07-19
+- **方案**：`requirements.txt` Core 段补齐三个依赖，版本约束与 `pyproject.toml` 对齐。
+- **Feature Spec**：`mydocs/specs/2026-07-19_16-59_test-env-isolation.md`
 
 ---
 

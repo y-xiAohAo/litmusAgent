@@ -6,10 +6,10 @@
 - **已完成**：Phase 10.9 —— Demo 脚本与录制准备（demo_real_llm.py / test_demo.py / demo.md）
 - **已完成**：评测日志体系（evaluation-log.md / evaluation-spec.md / test_evaluation_log.py）
 - **质量门禁**：`pytest tests/` + `mypy src/` + `ruff check src/ tests/` 全绿
-- **测试基线**：541 passed，1 skipped（跳过项为 tiktoken 未安装）
+- **测试基线**：678 passed，1 skipped（跳过项为 tiktoken 未安装）
 - **Git 状态**：`master` 分支，有未提交修改（评测日志体系）
-- **当前任务**：memory_search 工具完成（search-then-read 召回重构，实测 LLM 零 URI 猜测错误）；下一步候选：TD-010、Web UI trace 可视化、覆盖率提升
-- **当前规格**：`mydocs/specs/2026-07-18_19-40_memory-search-tool.md`（SDD-RIPER-ONE）
+- **当前任务**：TD-011/TD-012 完成（测试环境隔离 conftest + requirements.txt 依赖对齐）；下一步候选：TD-010、Web UI trace 可视化、覆盖率提升
+- **当前规格**：`mydocs/specs/2026-07-19_16-59_test-env-isolation.md`（SDD-RIPER-ONE）
 
 ---
 
