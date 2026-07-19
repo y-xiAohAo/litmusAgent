@@ -6,10 +6,10 @@
 - **已完成**：Phase 10.9 —— Demo 脚本与录制准备（demo_real_llm.py / test_demo.py / demo.md）
 - **已完成**：评测日志体系（evaluation-log.md / evaluation-spec.md / test_evaluation_log.py）
 - **质量门禁**：`pytest tests/` + `mypy src/` + `ruff check src/ tests/` 全绿
-- **测试基线**：705 passed，1 skipped（跳过项为 tiktoken 未安装）
+- **测试基线**：715 passed，1 skipped（跳过项为 tiktoken 未安装）
 - **Git 状态**：`master` 分支，有未提交修改（评测日志体系）
-- **当前任务**：Batch 2 完成（三臂 20/20，527,863 tokens；关键发现：显式分步 prompt 抵消 planner 价值、产物断言看不到工具偏好）；下一步候选：Batch 3（开放式 prompt + 工具路径断言）、简历数字升级、TD-010
-- **当前规格**：`mydocs/specs/2026-07-19_20-05_batch-e2e-batch2.md`（SDD-RIPER-ONE）
+- **当前任务**：Batch 3 完成（三臂 100%/100%/95%，首例真实工具偏好失败被工具路径断言捕获；总耗 572,541 tokens）；下一步候选：Batch 4（更长链路+重复采样）、简历数字升级、TD-010
+- **当前规格**：`mydocs/specs/2026-07-19_21-50_batch-e2e-batch3.md`（SDD-RIPER-ONE）
 
 ---
 

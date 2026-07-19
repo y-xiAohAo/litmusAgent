@@ -247,6 +247,33 @@ if __name__ == "__main__":
 
 ---
 
+## 批量评测（Batch E2E）
+
+项目内置批量评测体系，用于在真实 LLM 上量化 Agent 机制效果（规划/反思对照实验）：
+
+```bash
+# 冒烟测试：合成结果，零成本验证结构
+python examples/batch_e2e.py --echo
+
+# 全批真实运行（默认 b3 任务集：20 开放任务 × 3 机制臂，串行）
+python examples/batch_e2e.py
+
+# 子集试点：指定任务与机制臂
+python examples/batch_e2e.py --only T41,T47 --arms full
+
+# 切换任务集（b1 基线 / b2 高难显式分步 / b3 开放）
+python examples/batch_e2e.py --set b2
+```
+
+- **任务集**：`examples/batch_tasks*.py`，覆盖算法/文件处理/数据分析/多步工程/file_edit 专项/开放报告，难度 L1-L4 递进；
+- **机制臂**：`full`（规划+反思全开）/ `no-planner` / `no-reflect`，两两对照；
+- **判分**：沙箱断言 + LLM-judge 混合；部分任务带工具路径断言（产物正确但未用指定工具也判 FAIL）；
+- **产出**：聚合报告（成功率/轮数/token/失败分类）写入 `mydocs/reports/`，token 成本逐 run 统计；历史报告见 `docs/batch-e2e-batch*-report.md`。
+
+真实运行需要 `OPENAI_API_KEY` 与可用的 Docker daemon。
+
+---
+
 ## 常见问题
 
 ### 1. 没有 API Key 怎么测试？

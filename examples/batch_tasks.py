@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -37,6 +37,7 @@ class BatchTask:
     judge_rubric: str | None = None
     artifact_path: str = ""  # 开放类：judge 读取的产物路径（/workspace/...）
     max_turns: int = 12
+    expected_tools: list[str] = field(default_factory=list)  # 工具路径断言：这些工具必须被调用
 
 
 # ---------------------------------------------------------------------------

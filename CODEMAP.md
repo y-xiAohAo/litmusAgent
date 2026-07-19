@@ -39,7 +39,14 @@ D:\djh\hermes\project1
 │   ├── simple_agent.py          # 最小可运行示例：EchoClient + 自定义 tool（Phase 10.4）
 │   ├── run_once.py              # 单次任务示例：模拟 agent run（Phase 10.4）
 │   ├── with_config.py           # 配置驱动示例：从 YAML 加载配置（Phase 10.4）
-│   └── config.yaml              # 示例配置文件（Phase 10.4）
+│   ├── config.yaml              # 示例配置文件（Phase 10.4）
+│   ├── demo_real_llm.py         # 真实 LLM 演示脚本（Phase 10.9）
+│   ├── e2e_suite.py             # 真实 LLM 场景联调套件（S1-S12，evaluation-log 产出通道）
+│   ├── batch_e2e.py             # 批量评测 Runner：三机制臂对照 + 混合判分 + 工具路径断言（2026-07-19）
+│   ├── batch_tasks.py           # 任务集 b1：20 基线任务（L1-L3）
+│   ├── batch_tasks_b2.py        # 任务集 b2：20 高难任务，显式分步形态（L3-L4）
+│   ├── batch_tasks_b3.py        # 任务集 b3：20 开放任务，零步骤枚举 + 工具路径断言
+│   └── docker/                  # Docker 示例配置
 ├── scripts/
 │   ├── setup.sh                 # 一键创建 venv 并安装依赖（Linux/Mac）
 │   ├── hermes-memory.py         # 记忆管理 CLI 入口（Phase 8.4）

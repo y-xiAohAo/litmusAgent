@@ -12,6 +12,7 @@ Litmus Agent 是一个面向代码生成与执行的 LLM Agent 框架。它把"�
 - **配置驱动**：通过 YAML 配置文件管理 LLM 模型、沙箱参数、工具集、安全策略与长期记忆。
 - **长期记忆**：跨任务保留环境状态、用户偏好与失败模式（默认关闭，不破坏原有行为）。
 - **安全策略引擎**：可配置地拦截高危代码、文件路径操作与记忆读写。
+- **批量评测体系**：60 任务集（三难度递进）+ 断言/LLM-judge 混合判分 + 三机制臂对照 + 工具路径断言，token 成本可核算（`examples/batch_e2e.py`）。
 
 ## 前置条件
 
@@ -103,7 +104,7 @@ litmusAgent/
 │   ├── llm/                # LLM 客户端（OpenAI 兼容 + EchoClient）
 │   ├── sandbox/            # Docker 沙箱后端
 │   └── tools/              # Tool 实现（sandbox_exec / file_read / finish 等）
-├── examples/               # 可运行示例
+├── examples/               # 可运行示例（含 batch_e2e.py 批量评测体系）
 ├── scripts/                # 工具脚本（setup.sh / setup-docker.py / hermes-memory.py）
 ├── docker-compose.yml      # Docker Compose 运行配置
 ├── tests/                  # 测试集

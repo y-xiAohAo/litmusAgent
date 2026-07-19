@@ -257,3 +257,131 @@ class TestBuildAgentArms:
         report = runner["render_report"](results, tag="b2")
         for arm in ("full", "no-planner", "no-reflect"):
             assert f"| {arm} |" in report
+
+
+# ---------------------------------------------------------------------------
+# Batch 3：工具路径断言
+# ---------------------------------------------------------------------------
+
+
+class _StubEvent:
+    def __init__(self, event_type: str, tool: str) -> None:
+        self.event_type = event_type
+        self.payload = {"tool": tool}
+
+
+class _StubStep:
+    def __init__(self, events: list) -> None:
+        self.events = events
+
+
+class _StubTrace:
+    def __init__(self, steps: list) -> None:
+        self.steps = steps
+
+
+class _StubAgent:
+    def __init__(self, trace: _StubTrace) -> None:
+        self._trace = trace
+
+    def get_trace(self) -> _StubTrace:
+        return self._trace
+
+
+class TestExtractToolNames:
+    """从 Agent trace 提取工具名序列。"""
+
+    def test_extracts_only_tool_execution_events(self, runner):
+        """只提取 tool_execution 事件，按顺序返回工具名。"""
+        agent = _StubAgent(
+            _StubTrace(
+                [
+                    _StubStep([_StubEvent("tool_execution", "file_write")]),
+                    _StubStep(
+                        [
+                            _StubEvent("llm_call", ""),
+                            _StubEvent("tool_execution", "sandbox_exec"),
+                        ]
+                    ),
+                ]
+            )
+        )
+        assert runner["extract_tool_names"](agent) == ["file_write", "sandbox_exec"]
+
+    def test_empty_trace_returns_empty(self, runner):
+        """空 trace 应返回空列表。"""
+        agent = _StubAgent(_StubTrace([]))
+        assert runner["extract_tool_names"](agent) == []
+
+
+class TestExpectedToolsCompat:
+    """expected_tools 字段兼容性（b1/b2 默认空 = 无工具断言）。"""
+
+    def test_b1_b2_tasks_default_no_expected_tools(self, tasks_module, tasks_b2):
+        """b1/b2 任务必须全部 expected_tools 为空（历史口径不变）。"""
+        for task in tasks_module["BATCH_TASKS"]:
+            assert task.expected_tools == [], task.id
+        for task in tasks_b2["BATCH2_TASKS"]:
+            assert task.expected_tools == [], task.id
+
+    def test_run_result_default_tools_empty(self, runner):
+        """BatchRunResult 的 tools 字段默认空串（位置参数构造兼容）。"""
+        result = runner["BatchRunResult"](
+            "T41", "full", True, "assert", 3, 100, 10.0, "", ""
+        )
+        assert result.tools == ""
+
+
+# ---------------------------------------------------------------------------
+# Batch 3：b3 任务集完整性
+# ---------------------------------------------------------------------------
+
+TASKS_B3_PATH = Path(__file__).parent.parent / "examples" / "batch_tasks_b3.py"
+
+
+@pytest.fixture(scope="module")
+def tasks_b3():
+    """以 runpy 加载 b3 任务集脚本。"""
+    assert TASKS_B3_PATH.exists(), "examples/batch_tasks_b3.py 不存在"
+    return runpy.run_path(str(TASKS_B3_PATH))
+
+
+class TestB3TaskSetIntegrity:
+    """b3 任务集结构完整性（Batch 3：T41-T60）。"""
+
+    def test_task_count_and_unique_ids(self, tasks_b3):
+        """b3 应为 20 个任务且 id 唯一。"""
+        tasks = tasks_b3["BATCH3_TASKS"]
+        ids = [t.id for t in tasks]
+        assert len(tasks) == 20
+        assert len(set(ids)) == 20
+
+    def test_exactly_one_judge_method(self, tasks_b3):
+        """每个任务的 verify_script 与 judge_rubric 必须恰居其一。"""
+        for task in tasks_b3["BATCH3_TASKS"]:
+            assert (task.verify_script is not None) != (task.judge_rubric is not None), task.id
+
+    def test_file_edit_tasks_have_tool_assertion(self, tasks_b3):
+        """file_edit 专项任务必须全部带 expected_tools=['file_edit']。"""
+        fe_tasks = [t for t in tasks_b3["BATCH3_TASKS"] if t.category == "file_edit 专项"]
+        assert len(fe_tasks) == 6
+        for task in fe_tasks:
+            assert task.expected_tools == ["file_edit"], task.id
+
+    def test_other_tasks_have_no_tool_assertion(self, tasks_b3):
+        """非 file_edit 任务不带工具断言（避免过度约束）。"""
+        others = [t for t in tasks_b3["BATCH3_TASKS"] if t.category != "file_edit 专项"]
+        for task in others:
+            assert task.expected_tools == [], task.id
+
+    def test_prompts_have_no_step_enumeration(self, tasks_b3):
+        """开放式 prompt 不得含步骤枚举标记（恢复 planner 测量条件）。"""
+        for task in tasks_b3["BATCH3_TASKS"]:
+            assert "1) " not in task.prompt, task.id
+            assert "第一步" not in task.prompt, task.id
+
+    def test_verify_scripts_are_valid_python(self, tasks_b3):
+        """所有判分脚本必须是可解析的 Python。"""
+        for task in tasks_b3["BATCH3_TASKS"]:
+            if task.verify_script is not None:
+                ast.parse(task.verify_script)

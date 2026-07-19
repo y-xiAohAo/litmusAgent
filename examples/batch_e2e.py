@@ -50,8 +50,9 @@ ARMS: tuple[str, ...] = ("full", "no-planner", "no-reflect")
 TASK_SETS: dict[str, tuple[str, str]] = {
     "b1": ("batch_tasks", "BATCH_TASKS"),
     "b2": ("batch_tasks_b2", "BATCH2_TASKS"),
+    "b3": ("batch_tasks_b3", "BATCH3_TASKS"),
 }
-DEFAULT_TASK_SET = "b2"
+DEFAULT_TASK_SET = "b3"
 REPORTS_DIR = Path("mydocs/reports")
 JUDGE_PASS_SCORE = 4
 
@@ -105,6 +106,18 @@ class BatchRunResult:
     duration_s: float
     failure_class: str
     detail: str
+    tools: str = ""  # 实际被调用的工具名序列（逗号分隔）
+
+
+def extract_tool_names(agent: Agent) -> list[str]:
+    """从 Agent trace 提取被调用的工具名序列（tool_execution 事件）。"""
+    names: list[str] = []
+    for step in agent.get_trace().steps:
+        for event in step.events:
+            if event.event_type == "tool_execution":
+                payload = event.payload or {}
+                names.append(str(payload.get("tool", "unknown")))
+    return names
 
 
 def parse_judge_score(text: str) -> int | None:
@@ -198,24 +211,33 @@ async def run_one(task: BatchTask, arm: str, echo: bool = False) -> BatchRunResu
     turns = 0
     failure_class = ""
     success = False
+    tools_used: list[str] = []
     try:
         agent = build_agent(task, arm, client)
         try:
             await agent.run(task.prompt)
             turns = len(agent.get_trace().steps)
+            tools_used = extract_tool_names(agent)
             if task.verify_script is not None:
                 judge = "assert"
                 result = await agent._sandbox_backend.execute_code(task.verify_script)
-                success = result.exit_code == 0
-                detail = (result.stdout + result.stderr).strip()[:300]
+                artifact_ok = result.exit_code == 0
+                missing = [t for t in task.expected_tools if t not in tools_used]
+                success = artifact_ok and not missing
+                detail = (result.stdout + result.stderr).strip()[:220]
+                if missing:
+                    detail += f" | 缺少工具: {','.join(missing)}"
                 if not success:
-                    failure_class = classify_failure(
-                        judge=judge,
-                        verify_stdout=result.stdout,
-                        verify_stderr=result.stderr,
-                        turns=turns,
-                        max_turns=task.max_turns,
-                    )
+                    if missing:
+                        failure_class = "工具偏好"
+                    else:
+                        failure_class = classify_failure(
+                            judge=judge,
+                            verify_stdout=result.stdout,
+                            verify_stderr=result.stderr,
+                            turns=turns,
+                            max_turns=task.max_turns,
+                        )
             else:
                 judge = "llm-judge"
                 artifact = ""
@@ -247,6 +269,7 @@ async def run_one(task: BatchTask, arm: str, echo: bool = False) -> BatchRunResu
         duration_s=round(time.monotonic() - start, 1),
         failure_class=failure_class,
         detail=detail,
+        tools=",".join(tools_used),
     )
 
 
@@ -308,14 +331,15 @@ def render_report(
         "",
         "## 明细",
         "",
-        "| 任务 | 臂 | 判分 | 结果 | 轮数 | token | 耗时s | 失败分类 |",
-        "|---|---|---|---|---|---|---|---|",
+        "| 任务 | 臂 | 判分 | 结果 | 轮数 | token | 耗时s | 失败分类 | 工具序列 |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for r in results:
         mark = "✅" if r.success else "❌"
+        tools = r.tools[:40] + "…" if len(r.tools) > 40 else r.tools
         lines.append(
             f"| {r.task_id} | {r.arm} | {r.judge} | {mark} | {r.turns} "
-            f"| {r.tokens} | {r.duration_s} | {r.failure_class or '—'} |"
+            f"| {r.tokens} | {r.duration_s} | {r.failure_class or '—'} | {tools or '—'} |"
         )
     return "\n".join(lines) + "\n"
 
