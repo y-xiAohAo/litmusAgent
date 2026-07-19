@@ -15,7 +15,7 @@
 
 | 项 | 当前值 | 备注 |
 |---|---|---|
-| 测试总数 | 679 passed, 1 skipped | 跳过项为 `tiktoken` 未安装 |
+| 测试总数 | 705 passed, 1 skipped | 跳过项为 `tiktoken` 未安装；2026-07-19 批量评测体系（b1+b2）累计新增 27 测试 |
 | 类型检查 | `mypy src/` 零错误 | 46 source files（2026-07-19 复测；web 模块后增 2 文件） |
 | Lint | `ruff check src/ tests/` 全绿 | — |
 | 覆盖率 | `pytest --cov=src/agent` **91%**（3136 语句，272 未覆盖） | 首次测量 2026-07-18 |
@@ -63,6 +63,8 @@
 | 2026-07-18 | CLI chat 多轮真实联调 | deepseek-chat | 2 轮 | ✅ 成功 | ~8s | 修复 EVAL-012/013 后：多轮上下文保持（falcon-9），环境变量优先级与事件循环复用生效 |
 | 2026-07-19 | 反思层 A/B 实验 v3（EVAL-014 修复后） | deepseek-chat | 5v5 对照 | ✅ 有效 | — | **反思开启：轮数 5.0 / 失败 8.6 / 反思事件 33；反思关闭：轮数 7.4 / 失败 11.6 / 0——无效调用 -26%、轮数 -32%** |
 | 2026-07-19 | 反思层 A/B 实验 v1/v2/v3初跑 | deepseek-chat | 3 组 | ⚠️ 无效数据 | — | 反思零触发（模型降权快/战术多变/错误文案不含异常名）→ 暴露 EVAL-014 |
+| 2026-07-19 | **批量评测 Batch 1**（20 任务 × 2 臂，断言 16 + judge 4） | deepseek-chat | 均轮 4.1 / 4.5 | ✅ 双臂 20/20 | ~16s/run | **批量评测体系上线**：混合判分 + token 成本统计（EVAL-015 usage_totals）；full 118,384 / no-reflect 128,629 tokens；任务集对当前模型偏易，零失败样本，判别力不足 → Batch 2 提难度；详见 `docs/batch-e2e-batch1-report.md` |
+| 2026-07-19 | **批量评测 Batch 2**（20 高难任务 × 3 臂，断言 18 + judge 2） | deepseek-chat | 均轮 5.5 / 5.0 / 5.0 | ✅ 三臂 20/20 | ~21s/run | 陷阱任务全过：**显式分步 prompt 抵消 planner 价值**（full 臂 token +17% 纯开销）；产物断言看不到工具偏好失败 → Batch 3 方向：开放式 prompt + 工具路径断言；总耗 527,863 tokens；详见 `docs/batch-e2e-batch2-report.md` |
 
 ### 详细说明
 

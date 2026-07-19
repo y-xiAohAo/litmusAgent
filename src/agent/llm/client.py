@@ -63,6 +63,13 @@ class OpenAIClient(BaseLLMClient):
         self.max_retries = max_retries
         self.backoff_factor = backoff_factor
         self._client = httpx.AsyncClient(timeout=timeout)
+        # 累计 token 用量（EVAL-015）：每次成功响应后按 API 返回的 usage 字段累加，
+        # 供批量评测等场景统计成本；不影响 chat() 返回契约。
+        self.usage_totals: dict[str, int] = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
 
     @classmethod
     def from_env(
@@ -159,6 +166,9 @@ class OpenAIClient(BaseLLMClient):
         )
         resp.raise_for_status()
         data = resp.json()
+        usage = data.get("usage") or {}
+        for key in self.usage_totals:
+            self.usage_totals[key] += int(usage.get(key, 0) or 0)
         choice = data["choices"][0]
         msg = choice["message"]
         return {

@@ -1,0 +1,440 @@
+"""批量 E2E 评测 Runner（Batch E2E Benchmark）。
+
+用途：
+  对 BATCH_TASKS 批量执行真实 LLM 评测，按机制臂（full / no-reflect）形成
+  对照，聚合成功率、轮数、token 成本与失败分类，输出 Markdown 报告。
+  （full 臂 = 反思开启；两臂 planner 均关闭，与 evaluation-log A/B v3 口径一致。）
+
+运行方式：
+  # 冒烟（零成本，不调用 LLM / Docker，仅验证任务集与报告链路）
+  python examples/batch_e2e.py --echo
+
+  # 全批真实运行（20 任务 × 2 臂，串行）
+  python examples/batch_e2e.py
+
+  # 子集试点
+  python examples/batch_e2e.py --only T01,T11 --arms full
+
+安全约定：
+  - API Key 仅从环境变量读取，不落盘、不打印。
+  - 原始结果逐行写入 mydocs/reports/batch1_raw.jsonl（崩溃可续查）。
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import importlib
+import io
+import json
+import os
+import re
+import sys
+import time
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any
+
+from agent import Agent
+from agent.config import AgentConfig
+from agent.core.reflective_advisor import ReflectiveAdvisor
+from agent.llm import OpenAIClient
+
+try:
+    from batch_tasks import BATCH_TASKS, BatchTask
+except ImportError:  # 测试以 importlib 动态加载时，脚本目录不在 sys.path
+    sys.path.insert(0, str(Path(__file__).parent))
+    from batch_tasks import BATCH_TASKS, BatchTask
+
+ARMS: tuple[str, ...] = ("full", "no-planner", "no-reflect")
+TASK_SETS: dict[str, tuple[str, str]] = {
+    "b1": ("batch_tasks", "BATCH_TASKS"),
+    "b2": ("batch_tasks_b2", "BATCH2_TASKS"),
+}
+DEFAULT_TASK_SET = "b2"
+REPORTS_DIR = Path("mydocs/reports")
+JUDGE_PASS_SCORE = 4
+
+
+def _ensure_utf8_stdout() -> None:
+    """Windows 终端强制 UTF-8 输出（GBK 无法编码 ✅/❌ 等字符）。"""
+    try:
+        if isinstance(sys.stdout, io.TextIOWrapper):
+            sys.stdout.reconfigure(encoding="utf-8")
+        if isinstance(sys.stderr, io.TextIOWrapper):
+            sys.stderr.reconfigure(encoding="utf-8")
+    except AttributeError:
+        pass
+
+JUDGE_TEMPLATE = """你是严格、简明的评审。请根据评分标准对产物打分。
+
+【任务要求】
+{task_prompt}
+
+【产物内容】
+{artifact}
+
+【评分标准】
+{rubric}
+
+先给出不超过 3 句的点评，然后最后一行输出：SCORE: <1-5 的整数>"""
+
+
+@dataclass
+class BatchRunResult:
+    """单次 task×arm 运行结果。
+
+    Attributes:
+        task_id: 任务编号。
+        arm: 机制臂（full / no-reflect）。
+        success: 是否通过判分。
+        judge: 判分方式（assert / llm-judge / echo / error）。
+        turns: Agent 实际轮数。
+        tokens: 本次运行累计 token（prompt + completion）。
+        duration_s: 运行耗时（秒）。
+        failure_class: 失败分类（空串表示无失败）。
+        detail: 判分细节或错误摘要（截断）。
+    """
+
+    task_id: str
+    arm: str
+    success: bool
+    judge: str
+    turns: int
+    tokens: int
+    duration_s: float
+    failure_class: str
+    detail: str
+
+
+def parse_judge_score(text: str) -> int | None:
+    """从 judge 回复中解析 1-5 的整数分数，解析失败返回 None。"""
+    match = re.search(r"SCORE:\s*([1-5])", text)
+    return int(match.group(1)) if match else None
+
+
+def classify_failure(
+    *,
+    judge: str,
+    verify_stdout: str = "",
+    verify_stderr: str = "",
+    turns: int = 0,
+    max_turns: int = 12,
+    error: str = "",
+) -> str:
+    """对失败样本做确定性分类（超时 / 环境 / 语法 / 工具偏好 / 逻辑）。
+
+    规则优先级：异常错误 → 轮数耗尽 → 判分输出信号 → 默认逻辑。
+    """
+    haystack = f"{error}\n{verify_stdout}\n{verify_stderr}".lower()
+    if error:
+        if "timeout" in haystack or "timed out" in haystack:
+            return "超时"
+        return "环境"
+    if turns >= max_turns:
+        return "超时"
+    if "未知工具" in haystack or "unknown tool" in haystack:
+        return "工具偏好"
+    if "syntaxerror" in haystack or "indentationerror" in haystack:
+        return "语法"
+    return "逻辑"
+
+
+def build_agent(task: BatchTask, arm: str, client: OpenAIClient) -> Agent:
+    """按机制臂构造 Agent。
+
+    臂定义（对照设计，两两指向 full）：
+      full:       planner 开 + 反思开（默认 advisor）；
+      no-planner: planner 关 + 反思开（隔离 planner 贡献）；
+      no-reflect: planner 开 + 反思关（高阈值 advisor 确定性关闭，隔离反思贡献）。
+    """
+    config = AgentConfig()
+    config.agent.max_turns = task.max_turns
+    advisor = None
+    if arm in ("full", "no-reflect"):
+        config.agent.planner.enabled = True
+    if arm == "no-reflect":
+        advisor = ReflectiveAdvisor(
+            reflection_threshold=10**9,
+            escalate_threshold=10**9,
+        )
+    return Agent(
+        llm_client=client,
+        config=config,
+        max_turns=task.max_turns,
+        reflective_advisor=advisor,
+    )
+
+
+async def judge_artifact(
+    task: BatchTask,
+    client: OpenAIClient,
+    artifact: str,
+) -> tuple[bool, str]:
+    """LLM-judge：按 rubric 对产物打分，≥JUDGE_PASS_SCORE 为通过。"""
+    prompt = JUDGE_TEMPLATE.format(
+        task_prompt=task.prompt,
+        artifact=artifact[:8000] if artifact else "（产物缺失：文件未生成）",
+        rubric=task.judge_rubric or "",
+    )
+    response = await client.chat(
+        [{"role": "user", "content": prompt}],
+        temperature=0.0,
+    )
+    text = response["content"]
+    score = parse_judge_score(text)
+    return (score is not None and score >= JUDGE_PASS_SCORE), text
+
+
+async def run_one(task: BatchTask, arm: str, echo: bool = False) -> BatchRunResult:
+    """执行单次 task×arm 运行并判分。echo 模式返回合成结果（零成本冒烟）。"""
+    start = time.monotonic()
+    if echo:
+        return BatchRunResult(task.id, arm, True, "echo", 0, 0, 0.0, "", "")
+
+    client = OpenAIClient.from_env()
+    judge = "error"
+    detail = ""
+    turns = 0
+    failure_class = ""
+    success = False
+    try:
+        agent = build_agent(task, arm, client)
+        try:
+            await agent.run(task.prompt)
+            turns = len(agent.get_trace().steps)
+            if task.verify_script is not None:
+                judge = "assert"
+                result = await agent._sandbox_backend.execute_code(task.verify_script)
+                success = result.exit_code == 0
+                detail = (result.stdout + result.stderr).strip()[:300]
+                if not success:
+                    failure_class = classify_failure(
+                        judge=judge,
+                        verify_stdout=result.stdout,
+                        verify_stderr=result.stderr,
+                        turns=turns,
+                        max_turns=task.max_turns,
+                    )
+            else:
+                judge = "llm-judge"
+                artifact = ""
+                if task.artifact_path:
+                    raw = await agent._sandbox_backend.get_file(task.artifact_path)
+                    artifact = raw.decode("utf-8", errors="replace") if raw else ""
+                success, detail = await judge_artifact(task, client, artifact)
+                detail = detail.strip()[:300]
+                if not success:
+                    failure_class = classify_failure(
+                        judge=judge, turns=turns, max_turns=task.max_turns
+                    )
+        finally:
+            agent._sandbox_backend.close()
+    except Exception as exc:  # noqa: BLE001 —— 失败样本也要如实记录
+        detail = f"{type(exc).__name__}: {exc}"[:300]
+        failure_class = classify_failure(judge=judge, error=detail)
+    finally:
+        tokens = client.usage_totals["total_tokens"]
+        await client.close()
+
+    return BatchRunResult(
+        task_id=task.id,
+        arm=arm,
+        success=success,
+        judge=judge,
+        turns=turns,
+        tokens=tokens,
+        duration_s=round(time.monotonic() - start, 1),
+        failure_class=failure_class,
+        detail=detail,
+    )
+
+
+@dataclass
+class BatchSummary:
+    """单臂聚合指标。"""
+
+    runs: int = 0
+    passed: int = 0
+    total_turns: int = 0
+    total_tokens: int = 0
+    failure_classes: dict[str, int] = field(default_factory=dict)
+
+
+def summarize(results: list[BatchRunResult]) -> dict[str, BatchSummary]:
+    """按机制臂聚合指标。"""
+    out: dict[str, BatchSummary] = {}
+    for r in results:
+        summary = out.setdefault(r.arm, BatchSummary())
+        summary.runs += 1
+        summary.passed += int(r.success)
+        summary.total_turns += r.turns
+        summary.total_tokens += r.tokens
+        if r.failure_class:
+            key = r.failure_class
+            summary.failure_classes[key] = summary.failure_classes.get(key, 0) + 1
+    return out
+
+
+def render_report(
+    results: list[BatchRunResult],
+    tag: str = "",
+    arms: tuple[str, ...] = ARMS,
+) -> str:
+    """渲染 Markdown 聚合报告（分臂成功率/轮数/token/失败分布 + 明细表）。"""
+    summaries = summarize(results)
+    lines = [
+        f"# 批量 E2E 评测报告 {tag}".rstrip(),
+        "",
+        f"- 运行时间：{time.strftime('%Y-%m-%d %H:%M')}",
+        "- 模型：环境变量 `OPENAI_MODEL` 指向的 OpenAI 兼容端点；judge 与执行同模型（temperature=0）",
+        "- 采样说明：每 task×arm 单样本（Batch 1 口径）",
+        "",
+        "## 聚合指标",
+        "",
+        "| 机制臂 | 成功率 | 平均轮数 | 总 token | 平均 token/run | 失败分类分布 |",
+        "|---|---|---|---|---|---|",
+    ]
+    for arm in arms:
+        s = summaries.get(arm)
+        if s is None or s.runs == 0:
+            continue
+        rate = f"{s.passed}/{s.runs}（{s.passed / s.runs:.0%}）"
+        avg_turns = f"{s.total_turns / s.runs:.1f}"
+        avg_tokens = f"{s.total_tokens / s.runs:.0f}"
+        dist = "、".join(f"{k}×{v}" for k, v in sorted(s.failure_classes.items())) or "—"
+        lines.append(f"| {arm} | {rate} | {avg_turns} | {s.total_tokens} | {avg_tokens} | {dist} |")
+    lines += [
+        "",
+        "## 明细",
+        "",
+        "| 任务 | 臂 | 判分 | 结果 | 轮数 | token | 耗时s | 失败分类 |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for r in results:
+        mark = "✅" if r.success else "❌"
+        lines.append(
+            f"| {r.task_id} | {r.arm} | {r.judge} | {mark} | {r.turns} "
+            f"| {r.tokens} | {r.duration_s} | {r.failure_class or '—'} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+async def run_batch(
+    tasks: list[BatchTask],
+    arms: tuple[str, ...],
+    echo: bool,
+    raw_path: Path,
+) -> list[BatchRunResult]:
+    """串行执行批量任务，逐行落 JSONL；infra 错误（judge=error）重试一次。"""
+    results: list[BatchRunResult] = []
+    with raw_path.open("a", encoding="utf-8") as fh:
+        for arm in arms:
+            for task in tasks:
+                result = await run_one(task, arm, echo=echo)
+                if result.judge == "error" and not echo:
+                    print(f"[{arm}] {task.id} infra 错误，重试一次：{result.detail[:80]}")
+                    result = await run_one(task, arm, echo=echo)
+                results.append(result)
+                record = asdict(result)
+                record["ts"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+                fh.flush()
+                mark = "PASS" if result.success else "FAIL"
+                print(
+                    f"[{arm}] {task.id} {mark} judge={result.judge} "
+                    f"turns={result.turns} tokens={result.tokens} {result.duration_s}s"
+                )
+    return results
+
+
+def _load_tasks(set_name: str) -> list[BatchTask]:
+    """按 --set 加载任务集（b1 冻结复跑 / b2 高难版）。"""
+    if set_name not in TASK_SETS:
+        raise SystemExit(f"未知任务集：{set_name}（可选：{list(TASK_SETS)}）")
+    module_name, attr = TASK_SETS[set_name]
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError:
+        sys.path.insert(0, str(Path(__file__).parent))
+        module = importlib.import_module(module_name)
+    return list(getattr(module, attr))
+
+
+def _select_tasks(
+    tasks: list[BatchTask],
+    only: str | None,
+    limit: int | None,
+) -> list[BatchTask]:
+    """按 --only / --limit 过滤任务。"""
+    if only:
+        wanted = {item.strip() for item in only.split(",") if item.strip()}
+        tasks = [t for t in tasks if t.id in wanted]
+    if limit is not None:
+        tasks = tasks[:limit]
+    return tasks
+
+
+def _check_real_run_readiness() -> None:
+    """真实运行前置检查：API Key + Docker daemon。"""
+    if not os.environ.get("OPENAI_API_KEY"):
+        raise SystemExit("未检测到 OPENAI_API_KEY；结构验证请用 --echo 冒烟。")
+    import docker
+
+    try:
+        docker.from_env().ping()
+    except Exception as exc:
+        raise SystemExit(f"Docker daemon 不可达：{exc}") from exc
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """构建 CLI 参数解析器。"""
+    parser = argparse.ArgumentParser(description="批量 E2E 评测 Runner")
+    parser.add_argument("--echo", action="store_true", help="冒烟模式：合成结果，零成本")
+    parser.add_argument(
+        "--set",
+        default=DEFAULT_TASK_SET,
+        dest="task_set",
+        help=f"任务集（{list(TASK_SETS)}，默认 {DEFAULT_TASK_SET}）",
+    )
+    parser.add_argument("--only", default=None, help="只跑指定任务，逗号分隔（如 T01,T11）")
+    parser.add_argument("--arms", default=None, help="只跑指定机制臂，逗号分隔（如 full）")
+    parser.add_argument("--limit", type=int, default=None, help="只跑前 N 个任务")
+    parser.add_argument("--tag", default="", help="报告标题附加标签")
+    return parser
+
+
+async def main() -> int:
+    """CLI 入口：过滤任务 → 批量执行 → 渲染并落盘报告。"""
+    _ensure_utf8_stdout()
+    args = build_parser().parse_args()
+    tasks = _select_tasks(_load_tasks(args.task_set), args.only, args.limit)
+    arms = tuple(a.strip() for a in args.arms.split(",")) if args.arms else ARMS
+    if not tasks:
+        print("没有匹配的任务。")
+        return 1
+    invalid = [a for a in arms if a not in ARMS]
+    if invalid:
+        print(f"未知机制臂：{invalid}（可选：{list(ARMS)}）")
+        return 1
+    if not args.echo:
+        _check_real_run_readiness()
+
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    raw_path = REPORTS_DIR / f"{args.task_set}_raw.jsonl"
+    print(
+        f"批量评测启动：任务集 {args.task_set}，{len(tasks)} 任务 × "
+        f"{len(arms)} 臂，echo={args.echo}"
+    )
+
+    results = await run_batch(tasks, arms, args.echo, raw_path)
+    report = render_report(results, tag=args.tag, arms=arms)
+    report_path = REPORTS_DIR / f"{args.task_set}_report_{time.strftime('%Y%m%d_%H%M')}.md"
+    report_path.write_text(report, encoding="utf-8")
+    print(f"\n报告已写入 {report_path}\n")
+    print(report)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(main()))

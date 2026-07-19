@@ -248,3 +248,45 @@ class TestOpenAIClientChat:
 
         assert result["content"] == "result"
         assert result["tool_calls"] == tool_calls
+
+
+class TestOpenAIClientUsageTotals:
+    """EVAL-015：token 用量累计（usage_totals）。"""
+
+    @pytest.mark.asyncio
+    async def test_usage_accumulates_across_calls(self):
+        """每次成功响应的 usage 字段应累加到 usage_totals。"""
+        client = OpenAIClient(api_key="test", backoff_factor=0.0)
+        response = MagicMock(
+            raise_for_status=MagicMock(),
+            json=MagicMock(
+                return_value={
+                    "choices": [{"message": {"content": "ok", "tool_calls": None}}],
+                    "usage": {
+                        "prompt_tokens": 10,
+                        "completion_tokens": 5,
+                        "total_tokens": 15,
+                    },
+                }
+            ),
+        )
+        client._client.post = AsyncMock(return_value=response)
+
+        await client.chat([{"role": "user", "content": "hi"}])
+        await client.chat([{"role": "user", "content": "hi again"}])
+
+        assert client.usage_totals == {
+            "prompt_tokens": 20,
+            "completion_tokens": 10,
+            "total_tokens": 30,
+        }
+
+    @pytest.mark.asyncio
+    async def test_usage_missing_field_tolerated(self):
+        """响应缺少 usage 字段时 usage_totals 保持为零。"""
+        client = OpenAIClient(api_key="test", backoff_factor=0.0)
+        client._client.post = AsyncMock(return_value=_make_success_response("ok"))
+
+        await client.chat([{"role": "user", "content": "hi"}])
+
+        assert client.usage_totals["total_tokens"] == 0
