@@ -16,7 +16,7 @@
 | 项 | 当前值 | 备注 |
 |---|---|---|
 | 测试总数 | 679 passed, 1 skipped | 跳过项为 `tiktoken` 未安装 |
-| 类型检查 | `mypy src/` 零错误 | 44 source files |
+| 类型检查 | `mypy src/` 零错误 | 46 source files（2026-07-19 复测；web 模块后增 2 文件） |
 | Lint | `ruff check src/ tests/` 全绿 | — |
 | 覆盖率 | `pytest --cov=src/agent` **91%**（3136 语句，272 未覆盖） | 首次测量 2026-07-18 |
 | 当前 LLM 支持 | OpenAI 兼容端点 | 已验证 DeepSeek |
