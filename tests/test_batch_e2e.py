@@ -476,3 +476,109 @@ class TestB4TaskSetIntegrity:
         for task in tasks_b4["BATCH4_TASKS"]:
             if task.verify_script is not None:
                 ast.parse(task.verify_script)
+
+
+# ---------------------------------------------------------------------------
+# Batch 5：b5 记忆任务集完整性 + mem 臂
+# ---------------------------------------------------------------------------
+
+TASKS_B5_PATH = Path(__file__).parent.parent / "examples" / "batch_tasks_b5.py"
+
+
+@pytest.fixture(scope="module")
+def tasks_b5():
+    """以 runpy 加载 b5 任务集脚本。"""
+    assert TASKS_B5_PATH.exists(), "examples/batch_tasks_b5.py 不存在"
+    return runpy.run_path(str(TASKS_B5_PATH))
+
+
+class TestB5TaskSetIntegrity:
+    """b5 任务集结构完整性（Batch 5：T81-T100，记忆专项）。"""
+
+    def test_task_count_and_unique_ids(self, tasks_b5):
+        """b5 应为 20 个任务且 id 唯一。"""
+        tasks = tasks_b5["BATCH5_TASKS"]
+        ids = [t.id for t in tasks]
+        assert len(tasks) == 20
+        assert len(set(ids)) == 20
+
+    def test_all_tasks_are_two_phase(self, tasks_b5):
+        """所有 b5 任务必须是两阶段（prompt_b 非空）且有答案断言。"""
+        for task in tasks_b5["BATCH5_TASKS"]:
+            assert task.prompt_b, task.id
+            assert task.expected_in_answer, task.id
+
+    def test_categories_distribution(self, tasks_b5):
+        """跨会话召回 8 + 干扰召回 6 + 冲突更新 3 + 搜索模式 3。"""
+        categories = [t.category for t in tasks_b5["BATCH5_TASKS"]]
+        assert categories.count("跨会话召回") == 8
+        assert categories.count("干扰召回") == 6
+        assert categories.count("冲突更新") == 3
+        assert categories.count("搜索模式") == 3
+
+    def test_search_tasks_have_no_tool_assertion(self, tasks_b5):
+        """b5 所有任务不带工具断言（小记忆库走注入通道，搜索非必经路径）。"""
+        for task in tasks_b5["BATCH5_TASKS"]:
+            assert task.expected_tools == [], task.id
+
+    def test_b1_b4_tasks_no_two_phase_fields(self, tasks_module, tasks_b2, tasks_b3, tasks_b4):
+        """b1-b4 历史任务不受新字段影响（默认空）。"""
+        for module, attr in (
+            (tasks_module, "BATCH_TASKS"),
+            (tasks_b2, "BATCH2_TASKS"),
+            (tasks_b3, "BATCH3_TASKS"),
+            (tasks_b4, "BATCH4_TASKS"),
+        ):
+            for task in module[attr]:
+                assert task.prompt_b == "", task.id
+                assert task.expected_in_answer == [], task.id
+
+
+class TestBuildAgentMemoryArms:
+    """mem / no-mem 臂构造。"""
+
+    def _build(self, runner, arm: str):
+        from agent.llm import EchoClient
+
+        tasks_mod = runpy.run_path(str(TASKS_B5_PATH))
+        task = tasks_mod["BATCH5_TASKS"][0]
+        agent = runner["build_agent"](task, arm, EchoClient(), memory_root="/tmp/x")
+        return agent
+
+    def test_mem_arm_enables_memory_and_planner(self, runner):
+        """mem 臂应开启记忆与 planner。"""
+        agent = self._build(runner, "mem")
+        try:
+            assert agent._planner_enabled is True
+            assert agent.memory_manager is not None
+        finally:
+            agent._sandbox_backend.close()
+
+    def test_no_mem_arm_disables_memory(self, runner):
+        """no-mem 臂应关闭记忆、保留 planner。"""
+        agent = self._build(runner, "no-mem")
+        try:
+            assert agent._planner_enabled is True
+            assert agent.memory_manager is None
+        finally:
+            agent._sandbox_backend.close()
+
+
+class TestAnswerAssertWhitespace:
+    """expected_in_answer 判分对空白差异不敏感（T86 教训：'3月14日' vs '3 月 14 日'）。"""
+
+    def test_whitespace_insensitive_match(self, tasks_b5):
+        """答案与事实的空白差异不应判负（逻辑在 run_one 内联，此处锁定语义）。"""
+        facts = ["3 月 14 日", "沈确"]
+        answer = "评审人是沈确，截止日期是3月14日。"
+        answer_flat = answer.replace(" ", "").replace("　", "")
+        missing = [f for f in facts if f.replace(" ", "") not in answer_flat]
+        assert missing == []
+
+    def test_real_missing_fact_detected(self):
+        """真正缺失的事实仍应被检出。"""
+        facts = ["45", "沈确"]
+        answer = "负责人是沈确。"
+        answer_flat = answer.replace(" ", "")
+        missing = [f for f in facts if f.replace(" ", "") not in answer_flat]
+        assert missing == ["45"]

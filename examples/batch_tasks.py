@@ -38,6 +38,8 @@ class BatchTask:
     artifact_path: str = ""  # 开放类：judge 读取的产物路径（/workspace/...）
     max_turns: int = 12
     expected_tools: list[str] = field(default_factory=list)  # 工具路径断言：这些工具必须被调用
+    prompt_b: str = ""  # 两阶段任务的 phase B 查询（非空即两阶段执行）
+    expected_in_answer: list[str] = field(default_factory=list)  # 答案须包含的关键事实（记忆召回判分）
 
 
 # ---------------------------------------------------------------------------

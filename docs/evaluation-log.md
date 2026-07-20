@@ -15,7 +15,7 @@
 
 | 项 | 当前值 | 备注 |
 |---|---|---|
-| 测试总数 | 723 passed, 1 skipped | 跳过项为 `tiktoken` 未安装；2026-07-19 批量评测体系（b1-b4）累计新增 45 测试 |
+| 测试总数 | 732 passed, 1 skipped | 跳过项为 `tiktoken` 未安装；2026-07-21 批量评测体系（b1-b5）累计新增 54 测试 |
 | 类型检查 | `mypy src/` 零错误 | 46 source files（2026-07-19 复测；web 模块后增 2 文件） |
 | Lint | `ruff check src/ tests/` 全绿 | — |
 | 覆盖率 | `pytest --cov=src/agent` **91%**（3136 语句，272 未覆盖） | 首次测量 2026-07-18 |
@@ -67,6 +67,7 @@
 | 2026-07-19 | **批量评测 Batch 2**（20 高难任务 × 3 臂，断言 18 + judge 2） | deepseek-chat | 均轮 5.5 / 5.0 / 5.0 | ✅ 三臂 20/20 | ~21s/run | 陷阱任务全过：**显式分步 prompt 抵消 planner 价值**（full 臂 token +17% 纯开销）；产物断言看不到工具偏好失败 → Batch 3 方向：开放式 prompt + 工具路径断言；总耗 527,863 tokens；详见 `docs/batch-e2e-batch2-report.md` |
 | 2026-07-19 | **批量评测 Batch 3**（20 开放任务 × 3 臂 + 工具路径断言） | deepseek-chat | 均轮 5.0 / 4.4 / 5.0 | 100%/100%/95% | ~22s/run | **首例真实 S4 式工具偏好失败被捕获**（T42 no-reflect：产物正确但跳过 file_edit）；no-planner 臂 token -19% 但成功率无差异；3 个判分 bug（验收要素未写入 prompt）修复后重跑；总耗 572,541 tokens；详见 `docs/batch-e2e-batch3-report.md` |
 | 2026-07-20 | **批量评测 Batch 4**（L5：20 任务 × 3 臂 × 2 采样） | deepseek-chat | 均轮 5.8 / 4.8 / 5.5 | **98% / 88% / 88%** | ~23s/run | **planner 首次转正：+10pp**（b3 前纯开销）；**T73 /etc 地雷稳定机制差异**（full 2/2 回退 vs 对照臂 0/2 不回退，nobody 权限已实证）；T68 no-planner 稳定格式失败；总耗约 102.7 万 tokens；详见 `docs/batch-e2e-batch4-report.md` |
+| 2026-07-21 | **批量评测 Batch 5**（记忆专项：20 两阶段任务 × mem/no-mem × 2 采样） | deepseek-chat | 均轮 5.1 / 5.8 | **100% / 0%** | ~18s/run | **记忆机制完美对照**：开启时 20 任务召回 100%（含 10 事实干扰与冲突更正），关闭时 0/40；规则提取器不覆盖纯对话事实（产品边界实证）；总耗约 64.5 万 tokens；详见 `docs/batch-e2e-batch5-report.md` |
 
 ### 详细说明
 

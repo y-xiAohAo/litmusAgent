@@ -29,7 +29,9 @@ import io
 import json
 import os
 import re
+import shutil
 import sys
+import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -47,13 +49,17 @@ except ImportError:  # 测试以 importlib 动态加载时，脚本目录不在 
     from batch_tasks import BATCH_TASKS, BatchTask
 
 ARMS: tuple[str, ...] = ("full", "no-planner", "no-reflect")
+MEMORY_ARMS: tuple[str, ...] = ("mem", "no-mem")
+ALL_ARMS: tuple[str, ...] = ARMS + MEMORY_ARMS
+SET_ARMS: dict[str, tuple[str, ...]] = {"b5": MEMORY_ARMS}
 TASK_SETS: dict[str, tuple[str, str]] = {
     "b1": ("batch_tasks", "BATCH_TASKS"),
     "b2": ("batch_tasks_b2", "BATCH2_TASKS"),
     "b3": ("batch_tasks_b3", "BATCH3_TASKS"),
     "b4": ("batch_tasks_b4", "BATCH4_TASKS"),
+    "b5": ("batch_tasks_b5", "BATCH5_TASKS"),
 }
-DEFAULT_TASK_SET = "b4"
+DEFAULT_TASK_SET = "b5"
 REPORTS_DIR = Path("mydocs/reports")
 JUDGE_PASS_SCORE = 4
 
@@ -155,24 +161,35 @@ def classify_failure(
     return "逻辑"
 
 
-def build_agent(task: BatchTask, arm: str, client: OpenAIClient) -> Agent:
+def build_agent(
+    task: BatchTask,
+    arm: str,
+    client: OpenAIClient,
+    memory_root: str | None = None,
+) -> Agent:
     """按机制臂构造 Agent。
 
     臂定义（对照设计，两两指向 full）：
       full:       planner 开 + 反思开（默认 advisor）；
       no-planner: planner 关 + 反思开（隔离 planner 贡献）；
-      no-reflect: planner 开 + 反思关（高阈值 advisor 确定性关闭，隔离反思贡献）。
+      no-reflect: planner 开 + 反思关（高阈值 advisor 确定性关闭，隔离反思贡献）；
+      mem:        planner 开 + 反思开 + 记忆开（memory_root 注入，跨会话召回测量）；
+      no-mem:     planner 开 + 反思开 + 记忆关（记忆对照臂）。
     """
     config = AgentConfig()
     config.agent.max_turns = task.max_turns
     advisor = None
-    if arm in ("full", "no-reflect"):
+    if arm in ("full", "no-reflect", "mem", "no-mem"):
         config.agent.planner.enabled = True
     if arm == "no-reflect":
         advisor = ReflectiveAdvisor(
             reflection_threshold=10**9,
             escalate_threshold=10**9,
         )
+    if arm == "mem":
+        config.agent.memory.enabled = True
+        if memory_root is not None:
+            config.agent.memory.memory_root = memory_root
     return Agent(
         llm_client=client,
         config=config,
@@ -220,45 +237,77 @@ async def run_one(
     success = False
     tools_used: list[str] = []
     try:
-        agent = build_agent(task, arm, client)
-        try:
-            await agent.run(task.prompt)
-            turns = len(agent.get_trace().steps)
-            tools_used = extract_tool_names(agent)
-            if task.verify_script is not None:
-                judge = "assert"
-                result = await agent._sandbox_backend.execute_code(task.verify_script)
-                artifact_ok = result.exit_code == 0
-                missing = [t for t in task.expected_tools if t not in tools_used]
-                success = artifact_ok and not missing
-                detail = (result.stdout + result.stderr).strip()[:220]
-                if missing:
-                    detail += f" | 缺少工具: {','.join(missing)}"
-                if not success:
+        if task.prompt_b:
+            # 两阶段执行（跨会话记忆测量）：phase A 教学 → 新 Agent phase B 查询。
+            # phase B 无对话历史，记忆是唯一信息通道（仿 e2e_suite S6 模式）。
+            judge = "answer-assert"
+            memory_root = tempfile.mkdtemp(prefix="batch-mem-")
+            answer = ""
+            try:
+                for prompt in (task.prompt, task.prompt_b):
+                    agent = build_agent(task, arm, client, memory_root=memory_root)
+                    try:
+                        answer = await agent.run(prompt) or ""
+                        turns += len(agent.get_trace().steps)
+                        tools_used.extend(extract_tool_names(agent))
+                    finally:
+                        agent._sandbox_backend.close()
+            finally:
+                shutil.rmtree(memory_root, ignore_errors=True)
+            answer_flat = answer.replace(" ", "").replace("　", "")
+            missing_facts = [
+                f for f in task.expected_in_answer
+                if f.replace(" ", "") not in answer_flat
+            ]
+            missing_tools = [t for t in task.expected_tools if t not in tools_used]
+            success = not missing_facts and not missing_tools
+            detail = answer.strip()[:200]
+            if missing_facts:
+                detail += f" | 答案缺少事实: {','.join(missing_facts)}"
+                failure_class = "逻辑"
+            elif missing_tools:
+                detail += f" | 缺少工具: {','.join(missing_tools)}"
+                failure_class = "工具偏好"
+        else:
+            agent = build_agent(task, arm, client)
+            try:
+                await agent.run(task.prompt)
+                turns = len(agent.get_trace().steps)
+                tools_used = extract_tool_names(agent)
+                if task.verify_script is not None:
+                    judge = "assert"
+                    result = await agent._sandbox_backend.execute_code(task.verify_script)
+                    artifact_ok = result.exit_code == 0
+                    missing = [t for t in task.expected_tools if t not in tools_used]
+                    success = artifact_ok and not missing
+                    detail = (result.stdout + result.stderr).strip()[:220]
                     if missing:
-                        failure_class = "工具偏好"
-                    else:
+                        detail += f" | 缺少工具: {','.join(missing)}"
+                    if not success:
+                        if missing:
+                            failure_class = "工具偏好"
+                        else:
+                            failure_class = classify_failure(
+                                judge=judge,
+                                verify_stdout=result.stdout,
+                                verify_stderr=result.stderr,
+                                turns=turns,
+                                max_turns=task.max_turns,
+                            )
+                else:
+                    judge = "llm-judge"
+                    artifact = ""
+                    if task.artifact_path:
+                        raw = await agent._sandbox_backend.get_file(task.artifact_path)
+                        artifact = raw.decode("utf-8", errors="replace") if raw else ""
+                    success, detail = await judge_artifact(task, client, artifact)
+                    detail = detail.strip()[:300]
+                    if not success:
                         failure_class = classify_failure(
-                            judge=judge,
-                            verify_stdout=result.stdout,
-                            verify_stderr=result.stderr,
-                            turns=turns,
-                            max_turns=task.max_turns,
+                            judge=judge, turns=turns, max_turns=task.max_turns
                         )
-            else:
-                judge = "llm-judge"
-                artifact = ""
-                if task.artifact_path:
-                    raw = await agent._sandbox_backend.get_file(task.artifact_path)
-                    artifact = raw.decode("utf-8", errors="replace") if raw else ""
-                success, detail = await judge_artifact(task, client, artifact)
-                detail = detail.strip()[:300]
-                if not success:
-                    failure_class = classify_failure(
-                        judge=judge, turns=turns, max_turns=task.max_turns
-                    )
-        finally:
-            agent._sandbox_backend.close()
+            finally:
+                agent._sandbox_backend.close()
     except Exception as exc:  # noqa: BLE001 —— 失败样本也要如实记录
         detail = f"{type(exc).__name__}: {exc}"[:300]
         failure_class = classify_failure(judge=judge, error=detail)
@@ -468,13 +517,14 @@ async def main() -> int:
     _ensure_utf8_stdout()
     args = build_parser().parse_args()
     tasks = _select_tasks(_load_tasks(args.task_set), args.only, args.limit)
-    arms = tuple(a.strip() for a in args.arms.split(",")) if args.arms else ARMS
+    default_arms = SET_ARMS.get(args.task_set, ARMS)
+    arms = tuple(a.strip() for a in args.arms.split(",")) if args.arms else default_arms
     if not tasks:
         print("没有匹配的任务。")
         return 1
-    invalid = [a for a in arms if a not in ARMS]
+    invalid = [a for a in arms if a not in ALL_ARMS]
     if invalid:
-        print(f"未知机制臂：{invalid}（可选：{list(ARMS)}）")
+        print(f"未知机制臂：{invalid}（可选：{list(ALL_ARMS)}）")
         return 1
     if not args.echo:
         _check_real_run_readiness()

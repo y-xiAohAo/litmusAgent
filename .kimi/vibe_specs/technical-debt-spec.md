@@ -3,7 +3,7 @@
 > **SDD-RIPER-ONE 产物**：本文件是 Hermes Agent 当前技术债的“唯一真相源”。  
 > **原则**：`No Spec, No Code`。本清单中的任何一项进入 `Execute` 阶段前，必须先被选中并产出/细化对应 Spec，再经过 `Plan Approved` 门禁。  
 > **维护规则**：每完成一项技术债修复，必须同步更新本文件状态、相关测试数与文档（`docs/progress-spec.md`、`docs/session-context.md`、`docs/evaluation-log.md`、`CODEMAP.md`）。  
-> **最后更新**：2026-07-19
+> **最后更新**：2026-07-21
 
 ---
 
@@ -23,6 +23,7 @@
 | TD-010 | 沙箱网络策略增强（两阶段网络 + `network_mode` 配置化） | — | 🟡 低-中 | ⏳ 候选（2026-07-18 联调讨论登记） | ⚠️ 间接（S3 类场景） | 0.5-1 天 |
 | TD-011 | 默认门禁套件环境不确定性（`OPENAI_*` 污染 + web 测试隐性真实调用） | — | 🟠 中 | ✅ 已完成（2026-07-19，`tests/conftest.py` 全局清理） | ❌ 否 | 0.5 天 |
 | TD-012 | `requirements.txt` 与 `pyproject.toml` 依赖漂移（缺 fastapi/uvicorn/jinja2） | — | 🟡 低 | ✅ 已完成（2026-07-19） | ❌ 否 | 0.1 天 |
+| TD-013 | 纯对话事实不入记忆（`llm_extraction_enabled` 有开关无实现） | — | 🟡 低-中 | ⏳ 候选（2026-07-21 Batch 5 实证登记） | ❌ 否 | 1-2 天 |
 
 ---
 
@@ -476,6 +477,44 @@ Phase 8.1~8.3 已实现长期记忆存储、注入、记录。Phase 8.4 规划�
 - **日期**：2026-07-19
 - **方案**：`requirements.txt` Core 段补齐三个依赖，版本约束与 `pyproject.toml` 对齐。
 - **Feature Spec**：`mydocs/specs/2026-07-19_16-59_test-env-isolation.md`
+
+---
+
+### TD-013：纯对话事实不入记忆（`llm_extraction_enabled` 有开关无实现）
+
+#### 背景
+
+Batch 5（记忆专项批量评测）试点实证：默认 `RuleMemoryExtractor` 只覆盖三类记忆——产物（file_write 内容快照）、环境（pip 安装包）、失败模式（错误+反思事件）；**用户在对话中直接陈述的事实（"请记住：代号是 X"）不会被提取**。`MemoryConfig.llm_extraction_enabled` 配置项存在（`src/agent/config.py:102`）但 src 中无对应实现。
+
+实测记录：mem 臂 Agent 对话教学后 `memory_search` × 4 均检索为空（2026-07-20 试点）；事实改以 file_write 产物承载后召回 100%。
+
+#### 目标
+
+实现 LLM 驱动的对话事实提取器，使用户直接陈述的关键信息（偏好、代号、参数、约定）进入长期记忆，无需借助文件载体。
+
+#### 范围（候选草案）
+
+**Must Have**
+
+1. 实现 `LLMMemoryExtractor`（实现 `MemoryExtractor` 接口）：run 结束后用 LLM 从对话 trace 提取关键事实（去重、带置信度）。
+2. 接通 `llm_extraction_enabled` 配置开关：默认关闭（不破坏现有行为与成本）。
+3. 提取结果走既有 MemoryManager 写入与注入管线。
+4. 新增测试：对话事实 → 记忆条目 → 跨会话注入召回。
+
+**Non-Goals**
+
+- 不改变 RuleMemoryExtractor 现有行为（两提取器可叠加）。
+- 不做向量数据库/embedding 检索。
+
+#### 验收标准
+
+- 对话教学"代号是 X"后，新会话能通过记忆注入或 memory_search 召回 X。
+- `pytest tests/ -q` 不新增失败；mypy/ruff 全绿。
+- Batch 5 对话版任务（无文件载体）在开关开启后通过。
+
+#### 来源
+
+- 登记依据：`mydocs/specs/2026-07-20_22-20_batch-e2e-batch5-memory.md` §5 Step 4a；`docs/batch-e2e-batch5-report.md` 核心发现§4。
 
 ---
 
