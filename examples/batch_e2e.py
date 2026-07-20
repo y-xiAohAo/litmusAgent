@@ -51,8 +51,9 @@ TASK_SETS: dict[str, tuple[str, str]] = {
     "b1": ("batch_tasks", "BATCH_TASKS"),
     "b2": ("batch_tasks_b2", "BATCH2_TASKS"),
     "b3": ("batch_tasks_b3", "BATCH3_TASKS"),
+    "b4": ("batch_tasks_b4", "BATCH4_TASKS"),
 }
-DEFAULT_TASK_SET = "b3"
+DEFAULT_TASK_SET = "b4"
 REPORTS_DIR = Path("mydocs/reports")
 JUDGE_PASS_SCORE = 4
 
@@ -107,6 +108,7 @@ class BatchRunResult:
     failure_class: str
     detail: str
     tools: str = ""  # 实际被调用的工具名序列（逗号分隔）
+    sample: int = 1  # 第几次采样（重复采样用于区分稳定失败与模型抖动）
 
 
 def extract_tool_names(agent: Agent) -> list[str]:
@@ -199,11 +201,16 @@ async def judge_artifact(
     return (score is not None and score >= JUDGE_PASS_SCORE), text
 
 
-async def run_one(task: BatchTask, arm: str, echo: bool = False) -> BatchRunResult:
+async def run_one(
+    task: BatchTask,
+    arm: str,
+    echo: bool = False,
+    sample: int = 1,
+) -> BatchRunResult:
     """执行单次 task×arm 运行并判分。echo 模式返回合成结果（零成本冒烟）。"""
     start = time.monotonic()
     if echo:
-        return BatchRunResult(task.id, arm, True, "echo", 0, 0, 0.0, "", "")
+        return BatchRunResult(task.id, arm, True, "echo", 0, 0, 0.0, "", "", sample=sample)
 
     client = OpenAIClient.from_env()
     judge = "error"
@@ -270,6 +277,7 @@ async def run_one(task: BatchTask, arm: str, echo: bool = False) -> BatchRunResu
         failure_class=failure_class,
         detail=detail,
         tools=",".join(tools_used),
+        sample=sample,
     )
 
 
@@ -327,18 +335,39 @@ def render_report(
         avg_tokens = f"{s.total_tokens / s.runs:.0f}"
         dist = "、".join(f"{k}×{v}" for k, v in sorted(s.failure_classes.items())) or "—"
         lines.append(f"| {arm} | {rate} | {avg_turns} | {s.total_tokens} | {avg_tokens} | {dist} |")
+
+    if any(r.sample > 1 for r in results):
+        lines += [
+            "",
+            "## 采样一致性（每格为该任务的采样结果序列）",
+            "",
+            "| 任务 | " + " | ".join(arms) + " |",
+            "|---|" + "---|" * len(arms),
+        ]
+        task_ids = list(dict.fromkeys(r.task_id for r in results))
+        for tid in task_ids:
+            row = [tid]
+            for arm in arms:
+                cell = "".join(
+                    "✅" if r.success else "❌"
+                    for r in results
+                    if r.task_id == tid and r.arm == arm
+                )
+                row.append(cell or "—")
+            lines.append("| " + " | ".join(row) + " |")
+
     lines += [
         "",
         "## 明细",
         "",
-        "| 任务 | 臂 | 判分 | 结果 | 轮数 | token | 耗时s | 失败分类 | 工具序列 |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| 任务 | 臂 | 采样 | 判分 | 结果 | 轮数 | token | 耗时s | 失败分类 | 工具序列 |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in results:
         mark = "✅" if r.success else "❌"
         tools = r.tools[:40] + "…" if len(r.tools) > 40 else r.tools
         lines.append(
-            f"| {r.task_id} | {r.arm} | {r.judge} | {mark} | {r.turns} "
+            f"| {r.task_id} | {r.arm} | {r.sample} | {r.judge} | {mark} | {r.turns} "
             f"| {r.tokens} | {r.duration_s} | {r.failure_class or '—'} | {tools or '—'} |"
         )
     return "\n".join(lines) + "\n"
@@ -349,26 +378,31 @@ async def run_batch(
     arms: tuple[str, ...],
     echo: bool,
     raw_path: Path,
+    samples: int = 1,
 ) -> list[BatchRunResult]:
-    """串行执行批量任务，逐行落 JSONL；infra 错误（judge=error）重试一次。"""
+    """串行执行批量任务，逐行落 JSONL；infra 错误（judge=error）重试一次。
+
+    samples > 1 时每个 task×arm 重复采样（区分稳定失败与模型抖动）。
+    """
     results: list[BatchRunResult] = []
     with raw_path.open("a", encoding="utf-8") as fh:
         for arm in arms:
             for task in tasks:
-                result = await run_one(task, arm, echo=echo)
-                if result.judge == "error" and not echo:
-                    print(f"[{arm}] {task.id} infra 错误，重试一次：{result.detail[:80]}")
-                    result = await run_one(task, arm, echo=echo)
-                results.append(result)
-                record = asdict(result)
-                record["ts"] = time.strftime("%Y-%m-%d %H:%M:%S")
-                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-                fh.flush()
-                mark = "PASS" if result.success else "FAIL"
-                print(
-                    f"[{arm}] {task.id} {mark} judge={result.judge} "
-                    f"turns={result.turns} tokens={result.tokens} {result.duration_s}s"
-                )
+                for sample in range(1, samples + 1):
+                    result = await run_one(task, arm, echo=echo, sample=sample)
+                    if result.judge == "error" and not echo:
+                        print(f"[{arm}] {task.id}#{sample} infra 错误，重试一次：{result.detail[:80]}")
+                        result = await run_one(task, arm, echo=echo, sample=sample)
+                    results.append(result)
+                    record = asdict(result)
+                    record["ts"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                    fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+                    fh.flush()
+                    mark = "PASS" if result.success else "FAIL"
+                    print(
+                        f"[{arm}] {task.id}#{sample} {mark} judge={result.judge} "
+                        f"turns={result.turns} tokens={result.tokens} {result.duration_s}s"
+                    )
     return results
 
 
@@ -424,6 +458,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--only", default=None, help="只跑指定任务，逗号分隔（如 T01,T11）")
     parser.add_argument("--arms", default=None, help="只跑指定机制臂，逗号分隔（如 full）")
     parser.add_argument("--limit", type=int, default=None, help="只跑前 N 个任务")
+    parser.add_argument("--samples", type=int, default=1, help="每 task×arm 采样次数（默认 1）")
     parser.add_argument("--tag", default="", help="报告标题附加标签")
     return parser
 
@@ -448,10 +483,10 @@ async def main() -> int:
     raw_path = REPORTS_DIR / f"{args.task_set}_raw.jsonl"
     print(
         f"批量评测启动：任务集 {args.task_set}，{len(tasks)} 任务 × "
-        f"{len(arms)} 臂，echo={args.echo}"
+        f"{len(arms)} 臂 × {args.samples} 采样，echo={args.echo}"
     )
 
-    results = await run_batch(tasks, arms, args.echo, raw_path)
+    results = await run_batch(tasks, arms, args.echo, raw_path, samples=args.samples)
     report = render_report(results, tag=args.tag, arms=arms)
     report_path = REPORTS_DIR / f"{args.task_set}_report_{time.strftime('%Y%m%d_%H%M')}.md"
     report_path.write_text(report, encoding="utf-8")

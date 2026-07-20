@@ -385,3 +385,94 @@ class TestB3TaskSetIntegrity:
         for task in tasks_b3["BATCH3_TASKS"]:
             if task.verify_script is not None:
                 ast.parse(task.verify_script)
+
+
+# ---------------------------------------------------------------------------
+# Batch 4：重复采样
+# ---------------------------------------------------------------------------
+
+
+class TestSamples:
+    """--samples 重复采样机制。"""
+
+    async def test_run_batch_samples_loop(self, runner, tasks_b3, tmp_path):
+        """samples=2 时每任务每臂应产出 2 条结果，sample 序号 1/2。"""
+        tasks = tasks_b3["BATCH3_TASKS"][:1]
+        results = await runner["run_batch"](
+            tasks, ("full",), True, tmp_path / "raw.jsonl", samples=2
+        )
+        assert len(results) == 2
+        assert [r.sample for r in results] == [1, 2]
+
+    def test_consistency_view_in_report(self, runner):
+        """samples>1 时报告应含采样一致性视图。"""
+        cls = runner["BatchRunResult"]
+        results = [
+            cls("T61", "full", True, "assert", 3, 100, 10.0, "", "", "", 1),
+            cls("T61", "full", False, "assert", 5, 200, 20.0, "逻辑", "", "", 2),
+        ]
+        report = runner["render_report"](results, tag="b4")
+        assert "采样一致性" in report
+        assert "✅❌" in report
+
+    def test_no_consistency_view_for_single_sample(self, runner):
+        """单采样时不渲染一致性视图（向后兼容）。"""
+        cls = runner["BatchRunResult"]
+        results = [cls("T01", "full", True, "echo", 0, 0, 0.0, "", "")]
+        report = runner["render_report"](results)
+        assert "采样一致性" not in report
+
+
+# ---------------------------------------------------------------------------
+# Batch 4：b4 任务集完整性
+# ---------------------------------------------------------------------------
+
+TASKS_B4_PATH = Path(__file__).parent.parent / "examples" / "batch_tasks_b4.py"
+
+
+@pytest.fixture(scope="module")
+def tasks_b4():
+    """以 runpy 加载 b4 任务集脚本。"""
+    assert TASKS_B4_PATH.exists(), "examples/batch_tasks_b4.py 不存在"
+    return runpy.run_path(str(TASKS_B4_PATH))
+
+
+class TestB4TaskSetIntegrity:
+    """b4 任务集结构完整性（Batch 4：T61-T80，L5）。"""
+
+    def test_task_count_and_unique_ids(self, tasks_b4):
+        """b4 应为 20 个任务且 id 唯一。"""
+        tasks = tasks_b4["BATCH4_TASKS"]
+        ids = [t.id for t in tasks]
+        assert len(tasks) == 20
+        assert len(set(ids)) == 20
+
+    def test_exactly_one_judge_method(self, tasks_b4):
+        """每个任务的 verify_script 与 judge_rubric 必须恰居其一。"""
+        for task in tasks_b4["BATCH4_TASKS"]:
+            assert (task.verify_script is not None) != (task.judge_rubric is not None), task.id
+
+    def test_categories_and_judge_count(self, tasks_b4):
+        """长链路 10 + 错误注入 10，judge 恰为 2 个。"""
+        tasks = tasks_b4["BATCH4_TASKS"]
+        categories = [t.category for t in tasks]
+        assert categories.count("长链路") == 10
+        assert categories.count("错误注入") == 10
+        judges = [t for t in tasks if t.judge_rubric is not None]
+        assert len(judges) == 2
+        for task in judges:
+            assert task.artifact_path.startswith("/workspace/"), task.id
+
+    def test_expected_tools_only_on_edit_tasks(self, tasks_b4):
+        """仅 T67/T69 带 file_edit 工具路径断言。"""
+        with_tools = [t.id for t in tasks_b4["BATCH4_TASKS"] if t.expected_tools]
+        assert sorted(with_tools) == ["T67", "T69"]
+        for task in tasks_b4["BATCH4_TASKS"]:
+            if task.expected_tools:
+                assert task.expected_tools == ["file_edit"], task.id
+
+    def test_verify_scripts_are_valid_python(self, tasks_b4):
+        """所有判分脚本必须是可解析的 Python。"""
+        for task in tasks_b4["BATCH4_TASKS"]:
+            if task.verify_script is not None:
+                ast.parse(task.verify_script)
