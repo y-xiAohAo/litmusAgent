@@ -15,7 +15,7 @@
 
 | 项 | 当前值 | 备注 |
 |---|---|---|
-| 测试总数 | 732 passed, 1 skipped | 跳过项为 `tiktoken` 未安装；2026-07-21 批量评测体系（b1-b5）累计新增 54 测试 |
+| 测试总数 | 745 passed, 1 skipped | 跳过项为 `tiktoken` 未安装；2026-07-21 TD-013 落地（LLM 对话事实提取）新增 13 测试 |
 | 类型检查 | `mypy src/` 零错误 | 46 source files（2026-07-19 复测；web 模块后增 2 文件） |
 | Lint | `ruff check src/ tests/` 全绿 | — |
 | 覆盖率 | `pytest --cov=src/agent` **91%**（3136 语句，272 未覆盖） | 首次测量 2026-07-18 |
@@ -68,6 +68,7 @@
 | 2026-07-19 | **批量评测 Batch 3**（20 开放任务 × 3 臂 + 工具路径断言） | deepseek-chat | 均轮 5.0 / 4.4 / 5.0 | 100%/100%/95% | ~22s/run | **首例真实 S4 式工具偏好失败被捕获**（T42 no-reflect：产物正确但跳过 file_edit）；no-planner 臂 token -19% 但成功率无差异；3 个判分 bug（验收要素未写入 prompt）修复后重跑；总耗 572,541 tokens；详见 `docs/batch-e2e-batch3-report.md` |
 | 2026-07-20 | **批量评测 Batch 4**（L5：20 任务 × 3 臂 × 2 采样） | deepseek-chat | 均轮 5.8 / 4.8 / 5.5 | **98% / 88% / 88%** | ~23s/run | **planner 首次转正：+10pp**（b3 前纯开销）；**T73 /etc 地雷稳定机制差异**（full 2/2 回退 vs 对照臂 0/2 不回退，nobody 权限已实证）；T68 no-planner 稳定格式失败；总耗约 102.7 万 tokens；详见 `docs/batch-e2e-batch4-report.md` |
 | 2026-07-21 | **批量评测 Batch 5**（记忆专项：20 两阶段任务 × mem/no-mem × 2 采样） | deepseek-chat | 均轮 5.1 / 5.8 | **100% / 0%** | ~18s/run | **记忆机制完美对照**：开启时 20 任务召回 100%（含 10 事实干扰与冲突更正），关闭时 0/40；规则提取器不覆盖纯对话事实（产品边界实证）；总耗约 64.5 万 tokens；详见 `docs/batch-e2e-batch5-report.md` |
+| 2026-07-21 | **TD-013 验收**（T101/T102 对话版复验 × mem/no-mem × 2 采样） | deepseek-chat | 2 / 2 | **4/4 vs 0/4** | ~6s/run | **LLM 对话事实提取真实生效**：无文件载体纯口语教学，mem 臂跨会话召回 4/4；`llm_extraction_enabled` 从空壳开关变为真实能力（PREFERENCES + TASK_SUMMARIES，双层去重，定时清理接通） |
 
 ### 详细说明
 

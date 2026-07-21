@@ -114,6 +114,9 @@ llm:
 | `recency_fallback` | `bool` | `True` | L0 兜底：字面检索零命中时注入最近 N 条记忆（防止“失忆”）。 |
 | `semantic_retrieval` | `bool` | `False` | L2：字面检索未命中时调用 LLM 对候选记忆做语义重排（每次注入多一次 LLM 调用，失败降级 L0）。 |
 | `inject_max_entries` | `int` | `5` | 注入 system prompt 的最大条目数。 |
+| `llm_extraction_enabled` | `bool` | `False` | TD-013：是否启用 LLM 对话事实提取。开启后每轮运行结束时从对话中提取用户事实（PREFERENCES）与任务摘要（TASK_SUMMARIES），用户口头陈述的事实也能进入记忆。代价：每 `run()` 最多多一次 LLM 调用（预过滤跳过无实质输入的轮次）。 |
+| `max_age_days` | `int \| null` | `null` | TD-013：记忆最大保留天数，超过的条目在清理时删除。`null` 表示不做时间清理（默认行为不变）。 |
+| `cleanup_on_exit` | `bool` | `False` | 是否在 Agent 关闭时执行记忆清理（配合 `max_age_days` 生效）。 |
 
 示例：
 

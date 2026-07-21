@@ -80,12 +80,18 @@ class RuntimeServices:
 
         if memory_manager is None and config is not None and config.agent.memory.enabled:
             memory_config = config.agent.memory
+            llm_extractor = None
+            if memory_config.llm_extraction_enabled and llm_client is not None:
+                from agent.core.memory_llm_extractor import LLMMemoryExtractor
+
+                llm_extractor = LLMMemoryExtractor(llm_client)
             memory_manager = MemoryManager(
                 store=StructuredMemoryStore(root_dir=Path(memory_config.memory_root)),
                 extractor=RuleMemoryExtractor(),
                 config=memory_config,
                 policy=policy,
                 llm_client=llm_client,
+                llm_extractor=llm_extractor,
             )
 
         return cls(

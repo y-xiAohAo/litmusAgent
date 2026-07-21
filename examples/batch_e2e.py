@@ -188,6 +188,8 @@ def build_agent(
         )
     if arm == "mem":
         config.agent.memory.enabled = True
+        # TD-013：mem 臂同时开启 LLM 对话事实提取（additive，产物类任务不受影响）。
+        config.agent.memory.llm_extraction_enabled = True
         if memory_root is not None:
             config.agent.memory.memory_root = memory_root
     return Agent(

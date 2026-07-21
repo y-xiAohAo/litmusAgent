@@ -291,9 +291,36 @@ T100 = BatchTask(
     max_turns=10,
 )
 
+# ---------------------------------------------------------------------------
+# 对话复验（2，TD-013 验收）：无文件载体的纯对话教学
+# ---------------------------------------------------------------------------
+
+T101 = BatchTask(
+    id="T101",
+    name="对话复验-代号+负责人",
+    category="对话复验",
+    difficulty="L4",
+    prompt="请记住：项目代号是'夜航西飞'，技术负责人是陆远。回复已记住即可。",
+    prompt_b="我之前告诉你的项目代号和技术负责人分别是什么？",
+    expected_in_answer=["夜航西飞", "陆远"],
+    max_turns=8,
+)
+
+T102 = BatchTask(
+    id="T102",
+    name="对话复验-比例+开关",
+    category="对话复验",
+    difficulty="L4",
+    prompt="请记住：灰度比例是 17%，开关名是 feature-horizon。回复已记住即可。",
+    prompt_b="我之前告诉你的灰度比例和开关名分别是什么？",
+    expected_in_answer=["17%", "feature-horizon"],
+    max_turns=8,
+)
+
 BATCH5_TASKS: list[BatchTask] = [
     T81, T82, T83, T84, T85, T86, T87, T88,
     T89, T90, T91, T92, T93, T94,
     T95, T96, T97,
     T98, T99, T100,
+    T101, T102,
 ]

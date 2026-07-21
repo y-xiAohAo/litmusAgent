@@ -496,11 +496,11 @@ class TestB5TaskSetIntegrity:
     """b5 任务集结构完整性（Batch 5：T81-T100，记忆专项）。"""
 
     def test_task_count_and_unique_ids(self, tasks_b5):
-        """b5 应为 20 个任务且 id 唯一。"""
+        """b5 应为 22 个任务且 id 唯一（含 2 个 TD-013 对话复验任务）。"""
         tasks = tasks_b5["BATCH5_TASKS"]
         ids = [t.id for t in tasks]
-        assert len(tasks) == 20
-        assert len(set(ids)) == 20
+        assert len(tasks) == 22
+        assert len(set(ids)) == 22
 
     def test_all_tasks_are_two_phase(self, tasks_b5):
         """所有 b5 任务必须是两阶段（prompt_b 非空）且有答案断言。"""

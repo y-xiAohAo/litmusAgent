@@ -23,7 +23,7 @@
 | TD-010 | 沙箱网络策略增强（两阶段网络 + `network_mode` 配置化） | — | 🟡 低-中 | ⏳ 候选（2026-07-18 联调讨论登记） | ⚠️ 间接（S3 类场景） | 0.5-1 天 |
 | TD-011 | 默认门禁套件环境不确定性（`OPENAI_*` 污染 + web 测试隐性真实调用） | — | 🟠 中 | ✅ 已完成（2026-07-19，`tests/conftest.py` 全局清理） | ❌ 否 | 0.5 天 |
 | TD-012 | `requirements.txt` 与 `pyproject.toml` 依赖漂移（缺 fastapi/uvicorn/jinja2） | — | 🟡 低 | ✅ 已完成（2026-07-19） | ❌ 否 | 0.1 天 |
-| TD-013 | 纯对话事实不入记忆（`llm_extraction_enabled` 有开关无实现） | — | 🟡 低-中 | ⏳ 候选（2026-07-21 Batch 5 实证登记） | ❌ 否 | 1-2 天 |
+| TD-013 | 纯对话事实不入记忆（`llm_extraction_enabled` 有开关无实现） | — | 🟡 低-中 | ✅ 已完成（2026-07-21，LLM 提取器 + 去重 + 定时清理接通） | ❌ 否 | 1-2 天 |
 
 ---
 
@@ -512,9 +512,12 @@ Batch 5（记忆专项批量评测）试点实证：默认 `RuleMemoryExtractor`
 - `pytest tests/ -q` 不新增失败；mypy/ruff 全绿。
 - Batch 5 对话版任务（无文件载体）在开关开启后通过。
 
-#### 来源
+#### 修复记录
 
-- 登记依据：`mydocs/specs/2026-07-20_22-20_batch-e2e-batch5-memory.md` §5 Step 4a；`docs/batch-e2e-batch5-report.md` 核心发现§4。
+- **日期**：2026-07-21
+- **方案**：新增 `src/agent/core/memory_llm_extractor.py`（LLM 驱动，PREFERENCES 事实 + TASK_SUMMARIES 摘要；预过滤成本护栏；失败静默降级）；`runtime.py` 开关接线；双层去重（LLM 增量 prompt + 保存时规范化去重）；`max_age_days` + `cleanup_on_exit` 定时清理接通（复用既有 store.cleanup 与数量淘汰）。
+- **验收证据**：`tests/test_memory_llm_extractor.py` 11 个单测 + 集成测试（对话事实跨会话召回）通过；Batch 5 对话版 T101/T102（无文件载体教学）mem 臂 4/4 PASS、no-mem 臂 0/4（对照成立）；全量 745 passed / mypy 47 文件 / ruff 全绿。
+- **Feature Spec**：`mydocs/specs/2026-07-21_00-35_td-013-llm-memory-extractor.md`
 
 ---
 

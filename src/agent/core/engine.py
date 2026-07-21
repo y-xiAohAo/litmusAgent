@@ -392,6 +392,10 @@ class Agent:
             if config is not None
             else True
         )
+        # TD-013：长期记忆定时清理开关（cleanup_on_exit + max_age_days 配合）。
+        self._cleanup_memory_on_exit = (
+            config.agent.memory.cleanup_on_exit if config is not None else False
+        )
 
         # TD-005：内部工具的运行时依赖统一由 RuntimeServices 装配，
         # 新增内部工具不再需要修改本构造函数。
@@ -511,10 +515,13 @@ class Agent:
     def close(self) -> None:
         """关闭 Agent，释放资源。
 
-        当前主要清理 ContextCache（如果配置开启 cleanup_on_exit）。
+        清理 ContextCache（如果配置开启 cleanup_on_exit）；
+        长期记忆按 cleanup_on_exit + max_age_days 配置做时间清理（TD-013）。
         """
         if self.context_cache is not None and self._cleanup_cache_on_exit:
             self.context_cache.cleanup()
+        if self.memory_manager is not None and self._cleanup_memory_on_exit:
+            self.memory_manager.cleanup()
 
     def reset(self) -> None:
         """重置 Agent 的运行状态。
@@ -902,8 +909,10 @@ class Agent:
         finally:
             # Phase 8：运行结束时提取并持久化记忆
             if self.memory_manager is not None and trace_step is not None:
-                saved_entries = self.memory_manager.record(
-                    self.trace, self.state, {"run_id": run_id}
+                saved_entries = await self.memory_manager.record(
+                    self.trace,
+                    self.state,
+                    {"run_id": run_id, "messages": list(self.messages)},
                 )
                 if saved_entries:
                     trace_step.add_event(

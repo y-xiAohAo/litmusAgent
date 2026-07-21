@@ -53,7 +53,7 @@ def _enabled_config(**overrides: Any) -> MemoryConfig:
 class TestMemoryManagerWritePolicy:
     """验证 record() 中的 memory/category 写策略。"""
 
-    def test_record_skips_denied_category(self, tmp_path: Any) -> None:
+    async def test_record_skips_denied_category(self, tmp_path: Any) -> None:
         """写策略拒绝的 category 不应被保存。"""
         policy = PolicyEngine(
             rules=[
@@ -90,14 +90,14 @@ class TestMemoryManagerWritePolicy:
             config=_enabled_config(),
             policy=policy,
         )
-        saved = manager.record(AgentTrace(), AgentState())
+        saved = await manager.record(AgentTrace(), AgentState())
 
         assert len(saved) == 1
         assert saved[0].entry_id == "env1"
         assert store.get("env1") is not None
         assert store.get("art1") is None
 
-    def test_record_allows_all_when_no_policy(self, tmp_path: Any) -> None:
+    async def test_record_allows_all_when_no_policy(self, tmp_path: Any) -> None:
         """未注入策略时，record 保持原有行为。"""
         store = StructuredMemoryStore(tmp_path)
         entries = [
@@ -121,7 +121,7 @@ class TestMemoryManagerWritePolicy:
             extractor=_FakeExtractor(entries),
             config=_enabled_config(),
         )
-        saved = manager.record(AgentTrace(), AgentState())
+        saved = await manager.record(AgentTrace(), AgentState())
 
         assert len(saved) == 2
         assert store.get("env1") is not None

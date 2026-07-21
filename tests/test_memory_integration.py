@@ -437,3 +437,82 @@ async def test_memory_read_result_not_externalized(tmp_path: Path) -> None:
     assert result.success
     # 如果结果被外迁，这里只会看到缓存预览，看不到完整路径
     assert "/workspace/very_long_report_name.md" in result.content
+
+
+# ---------------------------------------------------------------------------
+# TD-013：LLM 对话事实提取 — 跨会话召回集成测试
+# ---------------------------------------------------------------------------
+
+
+class _FactScriptedClient:
+    """返回事实提取 JSON 的脚本化 client。"""
+
+    async def chat(self, messages: list, **kwargs):
+        return {
+            "content": '{"facts": [{"content": "项目代号是蓝鲸计划", "tags": ["代号"]}],'
+            ' "task_summary": null}',
+            "tool_calls": None,
+        }
+
+
+class TestLlmExtractionIntegration:
+    """对话教学事实 → 跨会话召回（记忆系统全链路）。"""
+
+    async def test_conversational_fact_roundtrip(self, tmp_path: Path) -> None:
+        """开关开启时：对话事实被提取、持久化，新会话可经 inject 召回。"""
+        from agent.config import MemoryConfig
+        from agent.core.memory import MemoryManager, RuleMemoryExtractor
+        from agent.core.memory_llm_extractor import LLMMemoryExtractor
+        from agent.core.state import AgentState
+        from agent.core.trace import AgentTrace
+        from agent.core.types import Message
+
+        config = MemoryConfig(enabled=True, llm_extraction_enabled=True)
+        manager = MemoryManager(
+            store=StructuredMemoryStore(tmp_path),
+            extractor=RuleMemoryExtractor(),
+            config=config,
+            llm_extractor=LLMMemoryExtractor(_FactScriptedClient()),
+        )
+        saved = await manager.record(
+            AgentTrace(),
+            AgentState(),
+            {
+                "run_id": "r1",
+                "messages": [Message(role="user", content="请记住：项目代号是蓝鲸计划。")],
+            },
+        )
+        assert any(e.category == MemoryCategory.PREFERENCES for e in saved)
+
+        # 跨会话：新 manager 实例（同 store），注入检索应命中
+        manager2 = MemoryManager(
+            store=StructuredMemoryStore(tmp_path),
+            extractor=RuleMemoryExtractor(),
+            config=config,
+        )
+        snippet = manager2.inject("项目代号是什么？")
+        assert "蓝鲸计划" in snippet
+
+    async def test_disabled_means_no_extraction(self, tmp_path: Path) -> None:
+        """开关关闭（无 llm_extractor）时：对话事实不进入记忆（行为不变）。"""
+        from agent.config import MemoryConfig
+        from agent.core.memory import MemoryManager, RuleMemoryExtractor
+        from agent.core.state import AgentState
+        from agent.core.trace import AgentTrace
+        from agent.core.types import Message
+
+        config = MemoryConfig(enabled=True, llm_extraction_enabled=False)
+        manager = MemoryManager(
+            store=StructuredMemoryStore(tmp_path),
+            extractor=RuleMemoryExtractor(),
+            config=config,
+        )
+        saved = await manager.record(
+            AgentTrace(),
+            AgentState(),
+            {
+                "run_id": "r1",
+                "messages": [Message(role="user", content="请记住：项目代号是蓝鲸计划。")],
+            },
+        )
+        assert all(e.category != MemoryCategory.PREFERENCES for e in saved)

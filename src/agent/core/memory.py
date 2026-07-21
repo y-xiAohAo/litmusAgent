@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import re
@@ -961,7 +962,7 @@ class MemoryManager:
         store: MemoryStore,
         extractor: MemoryExtractor,
         config: MemoryConfig,
-        llm_extractor: MemoryExtractor | None = None,
+        llm_extractor: Any | None = None,
         policy: PolicyEngine | None = None,
         llm_client: Any | None = None,
     ) -> None:
@@ -971,7 +972,8 @@ class MemoryManager:
             store: 持久化存储后端。
             extractor: 默认规则提取器。
             config: 记忆配置。
-            llm_extractor: 可选的 LLM 提取器；失败时不影响规则提取。
+            llm_extractor: 可选的 LLM 提取器（duck-typed：extract 返回列表
+                或可 await 列表，如 LLMMemoryExtractor）；失败时不影响规则提取。
             policy: 可选的安全策略引擎；未注入时不做读写权限检查。
             llm_client: 可选的 LLM 客户端，用于 L2 语义重排（分层检索）。
         """
@@ -1300,7 +1302,7 @@ class MemoryManager:
         age_days = (now - entry.updated_at).total_seconds() / 86400.0
         return float(0.5 ** (age_days / half_life))
 
-    def record(
+    async def record(
         self,
         trace: AgentTrace,
         state: AgentState,
@@ -1311,7 +1313,7 @@ class MemoryManager:
         Args:
             trace: 本次运行的 Trace。
             state: 本次运行的 State。
-            run_metadata: 可选的运行元数据，如 run_id。
+            run_metadata: 可选的运行元数据，如 run_id、messages。
 
         Returns:
             成功保存的记忆条目列表；失败返回空列表。
@@ -1324,9 +1326,16 @@ class MemoryManager:
             entries = self._extractor.extract(trace, state, run_metadata)
             if self._llm_extractor is not None:
                 try:
-                    entries.extend(
-                        self._llm_extractor.extract(trace, state, run_metadata)
+                    # 注入现有 PREFERENCES 摘要，支持 LLM 增量提取（去重第一层）。
+                    prefs = self._store.list_entries(MemoryCategory.PREFERENCES)
+                    existing_text = "\n".join(
+                        f"- {e.summary or e.content}" for e in prefs[:20]
                     )
+                    llm_metadata = {**run_metadata, "existing_preferences": existing_text}
+                    extracted = self._llm_extractor.extract(trace, state, llm_metadata)
+                    if inspect.isawaitable(extracted):
+                        extracted = await extracted
+                    entries.extend(extracted)
                 except Exception:
                     _logger.exception("LLM 记忆提取失败")
 
@@ -1441,15 +1450,20 @@ class MemoryManager:
                 _logger.exception("建立冲突链接失败：%s", conflict)
 
     def cleanup(self) -> int:
-        """清理过期记忆。
+        """按 `max_age_days` 配置清理过期记忆。
+
+        `max_age_days` 为 None 时不做时间清理（默认行为不变）。
 
         Returns:
             删除的条目数量。
         """
         if not self._config.enabled:
             return 0
+        max_age_days = self._config.max_age_days
+        if max_age_days is None:
+            return 0
         try:
-            return self._store.cleanup(None)
+            return self._store.cleanup(timedelta(days=max_age_days))
         except Exception:
             _logger.exception("记忆清理失败")
             return 0
@@ -1535,11 +1549,29 @@ class MemoryManager:
         return self._store.get(entry_id)
 
     def _save_entry(self, entry: MemoryEntry) -> MemoryEntry:
-        """单条保存：过滤敏感信息、实施数量淘汰、写入 store。"""
+        """单条保存：过滤敏感信息、偏好去重、数量淘汰、写入 store。"""
         if self._config.filter_sensitive:
             entry = self._apply_sensitive_filter(entry)
+        if entry.category == MemoryCategory.PREFERENCES:
+            # 去重第二层：内容规范化（大小写/空白/标点）命中则刷新旧条目
+            # updated_at 而非新增——recency 语义自然成立（TD-013）。
+            duplicate = self._find_duplicate_preference(entry)
+            if duplicate is not None:
+                duplicate.updated_at = datetime.now(timezone.utc)
+                return self._store.save(duplicate)
         self._enforce_category_limit(entry.category)
         return self._store.save(entry)
+
+    def _find_duplicate_preference(self, entry: MemoryEntry) -> MemoryEntry | None:
+        """在现有 PREFERENCES 中查找与 entry 规范化内容相同的条目。"""
+        norm = _normalize_preference_text(entry.content.get("fact", "") or entry.summary)
+        if not norm:
+            return None
+        for existing in self._store.list_entries(MemoryCategory.PREFERENCES):
+            existing_text = existing.content.get("fact", "") or existing.summary
+            if _normalize_preference_text(existing_text) == norm:
+                return existing
+        return None
 
     def _enforce_category_limit(self, category: MemoryCategory) -> None:
         """按 max_entries_per_category 淘汰最旧条目。"""
@@ -1587,6 +1619,11 @@ def _entry_to_dict(entry: MemoryEntry) -> dict[str, Any]:
     data["created_at"] = entry.created_at.isoformat()
     data["updated_at"] = entry.updated_at.isoformat()
     return data
+
+
+def _normalize_preference_text(text: str) -> str:
+    """偏好文本规范化：小写化并去除空白与标点，用于去重比较（TD-013）。"""
+    return re.sub(r"[\s，。、；：,.;:'\"’‘“”\-_*#（）()]+", "", text.lower())
 
 
 # ---------------------------------------------------------------------------

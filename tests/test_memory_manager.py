@@ -121,7 +121,7 @@ def test_manager_inject_limits_entries_and_tokens(tmp_path: Path) -> None:
     assert len(fragment) <= 10 * 3 + 20
 
 
-def test_manager_record_saves_extracted_entries(tmp_path: Path) -> None:
+async def test_manager_record_saves_extracted_entries(tmp_path: Path) -> None:
     """record 应调用 extractor 并把条目写入 store。"""
     store = StructuredMemoryStore(tmp_path)
     entry = MemoryEntry(
@@ -136,12 +136,12 @@ def test_manager_record_saves_extracted_entries(tmp_path: Path) -> None:
         extractor=_FakeExtractor([entry]),
         config=_enabled_config(),
     )
-    saved = manager.record(AgentTrace(), AgentState())
+    saved = await manager.record(AgentTrace(), AgentState())
     assert len(saved) == 1
     assert store.get("e1") is not None
 
 
-def test_manager_record_filters_sensitive_content(tmp_path: Path) -> None:
+async def test_manager_record_filters_sensitive_content(tmp_path: Path) -> None:
     """filter_sensitive 开启时应红码敏感内容。"""
     store = StructuredMemoryStore(tmp_path)
     entry = MemoryEntry(
@@ -159,12 +159,12 @@ def test_manager_record_filters_sensitive_content(tmp_path: Path) -> None:
         extractor=_FakeExtractor([entry]),
         config=_enabled_config(),
     )
-    saved = manager.record(AgentTrace(), AgentState())
+    saved = await manager.record(AgentTrace(), AgentState())
     assert saved[0].content["api_key"] == "[REDACTED]"
     assert saved[0].summary == "[REDACTED]"
 
 
-def test_manager_record_enforces_max_entries_per_category(tmp_path: Path) -> None:
+async def test_manager_record_enforces_max_entries_per_category(tmp_path: Path) -> None:
     """超过 max_entries_per_category 时应淘汰最旧条目。"""
     store = StructuredMemoryStore(tmp_path)
     for i in range(2):
@@ -190,7 +190,7 @@ def test_manager_record_enforces_max_entries_per_category(tmp_path: Path) -> Non
         extractor=_FakeExtractor([new_entry]),
         config=_enabled_config(max_entries_per_category=2),
     )
-    manager.record(AgentTrace(), AgentState())
+    await manager.record(AgentTrace(), AgentState())
 
     env_entries = store.list_entries(category=MemoryCategory.ENVIRONMENT)
     assert len(env_entries) == 2
@@ -199,7 +199,7 @@ def test_manager_record_enforces_max_entries_per_category(tmp_path: Path) -> Non
     assert "old0" not in entry_ids
 
 
-def test_manager_record_failure_returns_empty_list(tmp_path: Path) -> None:
+async def test_manager_record_failure_returns_empty_list(tmp_path: Path) -> None:
     """extractor 异常时不应抛到上层，返回空列表。"""
     store = StructuredMemoryStore(tmp_path)
     manager = MemoryManager(
@@ -207,7 +207,7 @@ def test_manager_record_failure_returns_empty_list(tmp_path: Path) -> None:
         extractor=_FailingExtractor(),
         config=_enabled_config(),
     )
-    assert manager.record(AgentTrace(), AgentState()) == []
+    assert await manager.record(AgentTrace(), AgentState()) == []
 
 
 def test_manager_cleanup_delegates_to_store(tmp_path: Path) -> None:
