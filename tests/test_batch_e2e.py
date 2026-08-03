@@ -582,3 +582,122 @@ class TestAnswerAssertWhitespace:
         answer_flat = answer.replace(" ", "")
         missing = [f for f in facts if f.replace(" ", "") not in answer_flat]
         assert missing == ["45"]
+
+
+# ---------------------------------------------------------------------------
+# Batch 6：b6 压力任务集完整性 + 种子机制
+# ---------------------------------------------------------------------------
+
+TASKS_B6_PATH = Path(__file__).parent.parent / "examples" / "batch_tasks_b6.py"
+
+
+@pytest.fixture(scope="module")
+def tasks_b6():
+    """以 runpy 加载 b6 任务集脚本。"""
+    assert TASKS_B6_PATH.exists(), "examples/batch_tasks_b6.py 不存在"
+    return runpy.run_path(str(TASKS_B6_PATH))
+
+
+class TestB6TaskSetIntegrity:
+    """b6 任务集结构完整性（Batch 6：T103-T122，记忆压力）。"""
+
+    def test_task_count_and_unique_ids(self, tasks_b6):
+        """b6 应为 20 个任务且 id 唯一。"""
+        tasks = tasks_b6["BATCH6_TASKS"]
+        ids = [t.id for t in tasks]
+        assert len(tasks) == 20
+        assert len(set(ids)) == 20
+
+    def test_categories_distribution(self, tasks_b6):
+        """大海捞针 8 + 相似干扰 6 + 深埋旧值 3 + 搜索必需 3。"""
+        categories = [t.category for t in tasks_b6["BATCH6_TASKS"]]
+        assert categories.count("大海捞针") == 8
+        assert categories.count("相似干扰") == 6
+        assert categories.count("深埋旧值") == 3
+        assert categories.count("搜索必需") == 3
+
+    def test_all_tasks_seeded_100_noise(self, tasks_b6):
+        """所有任务必须有目标事实、100 条噪声、答案断言，且无工具断言。"""
+        for task in tasks_b6["BATCH6_TASKS"]:
+            assert task.seed_facts, task.id
+            assert task.noise_count == 100, task.id
+            assert task.expected_in_answer, task.id
+            assert task.expected_tools == [], task.id
+
+    def test_similar_tasks_have_decoys(self, tasks_b6):
+        """相似干扰任务必须带 14-15 条 decoy。"""
+        for task in tasks_b6["BATCH6_TASKS"]:
+            if task.category == "相似干扰":
+                assert 14 <= len(task.seed_decoys) <= 15, task.id
+
+
+class TestSeedMemory:
+    """种子机制：确定性、年龄结构（Batch 6）。"""
+
+    def test_seed_creates_expected_structure(self, runner, tmp_path):
+        """预置后条目数 = 目标 + decoy + 噪声；目标比所有噪声老。"""
+        import json as _json
+
+        batch_tasks = runpy.run_path(str(TASKS_B6_PATH))
+        task = batch_tasks["T111"]  # 1 目标 + 15 decoy + 100 噪声
+        runner["seed_memory"](tmp_path, task)
+
+        pref_dir = tmp_path / "preferences"
+        files = list(pref_dir.glob("*.jsonl"))
+        assert len(files) == 1 + 15 + 100
+
+        ages = {}
+        for f in files:
+            data = _json.loads(f.read_text(encoding="utf-8"))
+            ages[f.name] = data["updated_at"]
+        target_age = ages["seed-target-0.jsonl"]
+        for name, ts in ages.items():
+            if name.startswith("seed-noise-"):
+                assert ts > target_age, f"{name} 不比目标新"
+
+    def test_noise_content_has_no_query_keywords(self, runner, tmp_path):
+        """噪声条目不包含查询关键词（防 L1 误命中）。"""
+        batch_tasks = runpy.run_path(str(TASKS_B6_PATH))
+        task = batch_tasks["T103"]
+        runner["seed_memory"](tmp_path, task)
+        from agent.core.memory import StructuredMemoryStore
+
+        store = StructuredMemoryStore(tmp_path)
+        from agent.core.memory import MemoryCategory
+
+        for entry in store.list_entries(MemoryCategory.PREFERENCES):
+            if entry.entry_id.startswith("seed-noise-"):
+                assert "项目代号" not in entry.summary
+                assert "苍鹭" not in entry.summary
+
+
+class TestBuildAgentStressArms:
+    """mem-default / mem-semantic 臂构造。"""
+
+    def _build(self, runner, arm: str):
+        from agent.llm import EchoClient
+
+        tasks_mod = runpy.run_path(str(TASKS_B6_PATH))
+        task = tasks_mod["BATCH6_TASKS"][0]
+        agent = runner["build_agent"](task, arm, EchoClient(), memory_root="/tmp/x")
+        return agent
+
+    def test_mem_default_arm(self, runner):
+        """mem-default 臂：记忆开、L2 关、LLM 提取关。"""
+        agent = self._build(runner, "mem-default")
+        try:
+            assert agent.memory_manager is not None
+            assert agent.memory_manager._config.semantic_retrieval is False
+            assert agent.memory_manager._config.llm_extraction_enabled is False
+        finally:
+            agent._sandbox_backend.close()
+
+    def test_mem_semantic_arm(self, runner):
+        """mem-semantic 臂：记忆开、L2 开、LLM 提取关。"""
+        agent = self._build(runner, "mem-semantic")
+        try:
+            assert agent.memory_manager is not None
+            assert agent.memory_manager._config.semantic_retrieval is True
+            assert agent.memory_manager._config.llm_extraction_enabled is False
+        finally:
+            agent._sandbox_backend.close()

@@ -40,6 +40,11 @@ class BatchTask:
     expected_tools: list[str] = field(default_factory=list)  # 工具路径断言：这些工具必须被调用
     prompt_b: str = ""  # 两阶段任务的 phase B 查询（非空即两阶段执行）
     expected_in_answer: list[str] = field(default_factory=list)  # 答案须包含的关键事实（记忆召回判分）
+    # 记忆压力测试种子字段（Batch 6）：非空 noise_count/seed_facts 触发程序化预置
+    seed_facts: list[str] = field(default_factory=list)    # 目标事实（写为 PREFERENCES 条目）
+    seed_decoys: list[str] = field(default_factory=list)   # 相似干扰条目（同类别）
+    noise_count: int = 0                                   # 确定性背景噪声条数
+    target_age_days: float = 0.0                           # 目标条目年龄（深埋控制）
 
 
 # ---------------------------------------------------------------------------

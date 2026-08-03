@@ -34,6 +34,7 @@ import sys
 import tempfile
 import time
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -50,16 +51,18 @@ except ImportError:  # 测试以 importlib 动态加载时，脚本目录不在 
 
 ARMS: tuple[str, ...] = ("full", "no-planner", "no-reflect")
 MEMORY_ARMS: tuple[str, ...] = ("mem", "no-mem")
-ALL_ARMS: tuple[str, ...] = ARMS + MEMORY_ARMS
-SET_ARMS: dict[str, tuple[str, ...]] = {"b5": MEMORY_ARMS}
+STRESS_ARMS: tuple[str, ...] = ("mem-default", "mem-semantic")
+ALL_ARMS: tuple[str, ...] = ARMS + MEMORY_ARMS + STRESS_ARMS
+SET_ARMS: dict[str, tuple[str, ...]] = {"b5": MEMORY_ARMS, "b6": STRESS_ARMS}
 TASK_SETS: dict[str, tuple[str, str]] = {
     "b1": ("batch_tasks", "BATCH_TASKS"),
     "b2": ("batch_tasks_b2", "BATCH2_TASKS"),
     "b3": ("batch_tasks_b3", "BATCH3_TASKS"),
     "b4": ("batch_tasks_b4", "BATCH4_TASKS"),
     "b5": ("batch_tasks_b5", "BATCH5_TASKS"),
+    "b6": ("batch_tasks_b6", "BATCH6_TASKS"),
 }
-DEFAULT_TASK_SET = "b5"
+DEFAULT_TASK_SET = "b6"
 REPORTS_DIR = Path("mydocs/reports")
 JUDGE_PASS_SCORE = 4
 
@@ -192,12 +195,72 @@ def build_agent(
         config.agent.memory.llm_extraction_enabled = True
         if memory_root is not None:
             config.agent.memory.memory_root = memory_root
+    if arm in ("mem-default", "mem-semantic"):
+        # Batch 6 压力臂：只测检索层（不开 LLM 提取，避免 phase B 自提取噪声）。
+        config.agent.memory.enabled = True
+        config.agent.memory.semantic_retrieval = arm == "mem-semantic"
+        if memory_root is not None:
+            config.agent.memory.memory_root = memory_root
     return Agent(
         llm_client=client,
         config=config,
         max_turns=task.max_turns,
         reflective_advisor=advisor,
     )
+
+
+def seed_memory(root: Path, task: BatchTask) -> None:
+    """程序化预置记忆库（Batch 6 压力测试，零 API 成本）。
+
+    写入目标事实（seed_facts）+ 相似干扰（seed_decoys）+ 确定性背景噪声
+    （noise_count 条 svc-i/param-i）。目标条目按 target_age_days 回填时间
+    （深埋控制：store.save 会刷新 updated_at，需事后改写文件时间戳）；
+    噪声条目年龄分布在最近一天内，保证全部比目标新（recency 把目标顶出
+    L0 注入窗口，检索必须靠 L1/L2/搜索）。
+    """
+    from agent.core.memory import MemoryCategory, MemoryEntry, StructuredMemoryStore
+
+    store = StructuredMemoryStore(root)
+
+    def _age_file(entry: MemoryEntry, days: float) -> None:
+        file_path = root / entry.category.value / f"{entry.entry_id}.jsonl"
+        data = json.loads(file_path.read_text(encoding="utf-8"))
+        ts = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        data["created_at"] = ts
+        data["updated_at"] = ts
+        file_path.write_text(json.dumps(data, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    for i, fact in enumerate(task.seed_facts):
+        entry = MemoryEntry(
+            entry_id=f"seed-target-{i}",
+            category=MemoryCategory.PREFERENCES,
+            content={"fact": fact},
+            summary=fact,
+            tags=["seed", "target"],
+        )
+        store.save(entry)
+        _age_file(entry, task.target_age_days)
+    for i, fact in enumerate(task.seed_decoys):
+        entry = MemoryEntry(
+            entry_id=f"seed-decoy-{i}",
+            category=MemoryCategory.PREFERENCES,
+            content={"fact": fact},
+            summary=fact,
+            tags=["seed", "decoy"],
+        )
+        store.save(entry)
+        _age_file(entry, 0.5)
+    for i in range(task.noise_count):
+        fact = f"服务 svc-{i:03d} 的参数 param-{i:03d} = {(i * 7) % 100}"
+        entry = MemoryEntry(
+            entry_id=f"seed-noise-{i:03d}",
+            category=MemoryCategory.PREFERENCES,
+            content={"fact": fact},
+            summary=fact,
+            tags=["seed", "noise"],
+        )
+        store.save(entry)
+        _age_file(entry, i / max(task.noise_count, 1))
 
 
 async def judge_artifact(
@@ -271,45 +334,75 @@ async def run_one(
                 detail += f" | 缺少工具: {','.join(missing_tools)}"
                 failure_class = "工具偏好"
         else:
-            agent = build_agent(task, arm, client)
+            memory_root: Path | None = None
+            if task.noise_count or task.seed_facts or task.seed_decoys:
+                memory_root = Path(tempfile.mkdtemp(prefix="batch-seed-"))
+                seed_memory(memory_root, task)
             try:
-                await agent.run(task.prompt)
-                turns = len(agent.get_trace().steps)
-                tools_used = extract_tool_names(agent)
-                if task.verify_script is not None:
-                    judge = "assert"
-                    result = await agent._sandbox_backend.execute_code(task.verify_script)
-                    artifact_ok = result.exit_code == 0
-                    missing = [t for t in task.expected_tools if t not in tools_used]
-                    success = artifact_ok and not missing
-                    detail = (result.stdout + result.stderr).strip()[:220]
-                    if missing:
-                        detail += f" | 缺少工具: {','.join(missing)}"
-                    if not success:
+                agent = build_agent(
+                    task,
+                    arm,
+                    client,
+                    memory_root=str(memory_root) if memory_root else None,
+                )
+                try:
+                    answer = await agent.run(task.prompt)
+                    turns = len(agent.get_trace().steps)
+                    tools_used = extract_tool_names(agent)
+                    if task.verify_script is not None:
+                        judge = "assert"
+                        result = await agent._sandbox_backend.execute_code(task.verify_script)
+                        artifact_ok = result.exit_code == 0
+                        missing = [t for t in task.expected_tools if t not in tools_used]
+                        success = artifact_ok and not missing
+                        detail = (result.stdout + result.stderr).strip()[:220]
                         if missing:
+                            detail += f" | 缺少工具: {','.join(missing)}"
+                        if not success:
+                            if missing:
+                                failure_class = "工具偏好"
+                            else:
+                                failure_class = classify_failure(
+                                    judge=judge,
+                                    verify_stdout=result.stdout,
+                                    verify_stderr=result.stderr,
+                                    turns=turns,
+                                    max_turns=task.max_turns,
+                                )
+                    elif task.expected_in_answer:
+                        judge = "answer-assert"
+                        answer = answer or ""
+                        answer_flat = answer.replace(" ", "").replace("　", "")
+                        missing_facts = [
+                            f for f in task.expected_in_answer
+                            if f.replace(" ", "") not in answer_flat
+                        ]
+                        missing_tools = [t for t in task.expected_tools if t not in tools_used]
+                        success = not missing_facts and not missing_tools
+                        detail = answer.strip()[:200]
+                        if missing_facts:
+                            detail += f" | 答案缺少事实: {','.join(missing_facts)}"
+                            failure_class = "逻辑"
+                        elif missing_tools:
+                            detail += f" | 缺少工具: {','.join(missing_tools)}"
                             failure_class = "工具偏好"
-                        else:
+                    else:
+                        judge = "llm-judge"
+                        artifact = ""
+                        if task.artifact_path:
+                            raw = await agent._sandbox_backend.get_file(task.artifact_path)
+                            artifact = raw.decode("utf-8", errors="replace") if raw else ""
+                        success, detail = await judge_artifact(task, client, artifact)
+                        detail = detail.strip()[:300]
+                        if not success:
                             failure_class = classify_failure(
-                                judge=judge,
-                                verify_stdout=result.stdout,
-                                verify_stderr=result.stderr,
-                                turns=turns,
-                                max_turns=task.max_turns,
+                                judge=judge, turns=turns, max_turns=task.max_turns
                             )
-                else:
-                    judge = "llm-judge"
-                    artifact = ""
-                    if task.artifact_path:
-                        raw = await agent._sandbox_backend.get_file(task.artifact_path)
-                        artifact = raw.decode("utf-8", errors="replace") if raw else ""
-                    success, detail = await judge_artifact(task, client, artifact)
-                    detail = detail.strip()[:300]
-                    if not success:
-                        failure_class = classify_failure(
-                            judge=judge, turns=turns, max_turns=task.max_turns
-                        )
+                finally:
+                    agent._sandbox_backend.close()
             finally:
-                agent._sandbox_backend.close()
+                if memory_root is not None:
+                    shutil.rmtree(memory_root, ignore_errors=True)
     except Exception as exc:  # noqa: BLE001 —— 失败样本也要如实记录
         detail = f"{type(exc).__name__}: {exc}"[:300]
         failure_class = classify_failure(judge=judge, error=detail)

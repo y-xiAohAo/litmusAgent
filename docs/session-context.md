@@ -6,10 +6,10 @@
 - **已完成**：Phase 10.9 —— Demo 脚本与录制准备（demo_real_llm.py / test_demo.py / demo.md）
 - **已完成**：评测日志体系（evaluation-log.md / evaluation-spec.md / test_evaluation_log.py）
 - **质量门禁**：`pytest tests/` + `mypy src/` + `ruff check src/ tests/` 全绿
-- **测试基线**：745 passed，1 skipped（跳过项为 tiktoken 未安装）
+- **测试基线**：753 passed，1 skipped（跳过项为 tiktoken 未安装）
 - **Git 状态**：`master` 分支，有未提交修改（评测日志体系）
-- **当前任务**：TD-013 完成（LLM 对话事实提取器 + 双层去重 + 定时清理；验收 T101/T102 mem 4/4 vs no-mem 0/4；简历 v3.1 口径补充）；下一步候选：Batch 6（大记忆库压力 / 提取质量审计）、TD-010
-- **当前规格**：`mydocs/specs/2026-07-21_00-35_td-013-llm-memory-extractor.md`（SDD-RIPER-ONE）
+- **当前任务**：Batch 6 完成（100 条记忆库压力测试：字面查询 100% 稳健、L2 无可测增量、T122 硬 paraphrase 暴露搜索词联想瓶颈；总耗仅 21.3 万 tokens）；下一步候选：查询扩展（同义搜索词生成）、200+ 条压力上限、LLM 提取质量审计、TD-010
+- **当前规格**：`mydocs/specs/2026-07-21_23-10_batch-e2e-batch6-memory-stress.md`（SDD-RIPER-ONE）
 
 ---
 
