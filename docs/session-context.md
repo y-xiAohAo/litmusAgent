@@ -6,10 +6,10 @@
 - **已完成**：Phase 10.9 —— Demo 脚本与录制准备（demo_real_llm.py / test_demo.py / demo.md）
 - **已完成**：评测日志体系（evaluation-log.md / evaluation-spec.md / test_evaluation_log.py）
 - **质量门禁**：`pytest tests/` + `mypy src/` + `ruff check src/ tests/` 全绿
-- **测试基线**：753 passed，1 skipped（跳过项为 tiktoken 未安装）
+- **测试基线**：760 passed，1 skipped（跳过项为 tiktoken 未安装）
 - **Git 状态**：`master` 分支，有未提交修改（评测日志体系）
-- **当前任务**：Batch 6 完成（100 条记忆库压力测试：字面查询 100% 稳健、L2 无可测增量、T122 硬 paraphrase 暴露搜索词联想瓶颈；总耗仅 21.3 万 tokens）；下一步候选：查询扩展（同义搜索词生成）、200+ 条压力上限、LLM 提取质量审计、TD-010
-- **当前规格**：`mydocs/specs/2026-07-21_23-10_batch-e2e-batch6-memory-stress.md`（SDD-RIPER-ONE）
+- **当前任务**：查询扩展（QE）落地（Multi-Query：L1 失配时 LLM 同义变体再检索；验收 qe 8/8 vs default 5/8，T122 复活；总耗约 4 万 tokens）；下一步候选：Batch 7（200+ 条压力上限 / LLM 提取质量审计）、TD-010
+- **当前规格**：`mydocs/specs/2026-08-03_23-05_query-expansion-memory.md`（SDD-RIPER-ONE）
 
 ---
 

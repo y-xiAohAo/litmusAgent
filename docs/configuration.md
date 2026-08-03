@@ -115,6 +115,7 @@ llm:
 | `semantic_retrieval` | `bool` | `False` | L2：字面检索未命中时调用 LLM 对候选记忆做语义重排（每次注入多一次 LLM 调用，失败降级 L0）。 |
 | `inject_max_entries` | `int` | `5` | 注入 system prompt 的最大条目数。 |
 | `llm_extraction_enabled` | `bool` | `False` | TD-013：是否启用 LLM 对话事实提取。开启后每轮运行结束时从对话中提取用户事实（PREFERENCES）与任务摘要（TASK_SUMMARIES），用户口头陈述的事实也能进入记忆。代价：每 `run()` 最多多一次 LLM 调用（预过滤跳过无实质输入的轮次）。 |
+| `query_expansion_enabled` | `bool` | `False` | 查询扩展（Multi-Query Expansion）：`memory_search` 原查询字面检索失配时，调用 LLM 生成 3-5 个同义搜索变体逐一再检索并合并。仅在失配时触发（命中零成本），LLM 失败静默降级为原行为。修复硬 paraphrase 查询（如「发布用的编号」→「构建标签」）的检索失败。 |
 | `max_age_days` | `int \| null` | `null` | TD-013：记忆最大保留天数，超过的条目在清理时删除。`null` 表示不做时间清理（默认行为不变）。 |
 | `cleanup_on_exit` | `bool` | `False` | 是否在 Agent 关闭时执行记忆清理（配合 `max_age_days` 生效）。 |
 

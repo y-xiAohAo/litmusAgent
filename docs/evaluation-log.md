@@ -15,7 +15,7 @@
 
 | 项 | 当前值 | 备注 |
 |---|---|---|
-| 测试总数 | 753 passed, 1 skipped | 跳过项为 `tiktoken` 未安装；2026-08-03 Batch 6 记忆压力体系新增 8 测试 |
+| 测试总数 | 760 passed, 1 skipped | 跳过项为 `tiktoken` 未安装；2026-08-03 查询扩展（QE）落地新增 7 测试 |
 | 类型检查 | `mypy src/` 零错误 | 46 source files（2026-07-19 复测；web 模块后增 2 文件） |
 | Lint | `ruff check src/ tests/` 全绿 | — |
 | 覆盖率 | `pytest --cov=src/agent` **91%**（3136 语句，272 未覆盖） | 首次测量 2026-07-18 |
@@ -70,6 +70,7 @@
 | 2026-07-21 | **批量评测 Batch 5**（记忆专项：20 两阶段任务 × mem/no-mem × 2 采样） | deepseek-chat | 均轮 5.1 / 5.8 | **100% / 0%** | ~18s/run | **记忆机制完美对照**：开启时 20 任务召回 100%（含 10 事实干扰与冲突更正），关闭时 0/40；规则提取器不覆盖纯对话事实（产品边界实证）；总耗约 64.5 万 tokens；详见 `docs/batch-e2e-batch5-report.md` |
 | 2026-07-21 | **TD-013 验收**（T101/T102 对话版复验 × mem/no-mem × 2 采样） | deepseek-chat | 2 / 2 | **4/4 vs 0/4** | ~6s/run | **LLM 对话事实提取真实生效**：无文件载体纯口语教学，mem 臂跨会话召回 4/4；`llm_extraction_enabled` 从空壳开关变为真实能力（PREFERENCES + TASK_SUMMARIES，双层去重，定时清理接通） |
 | 2026-08-03 | **批量评测 Batch 6**（记忆压力：20 任务 × 100 条库 × 2 臂 × 2 采样） | deepseek-chat | 均轮 1.9 / 1.8 | **92% / 92%** | ~3s/run | **100 条库下字面查询检索 100% 稳健**（30 天深埋/15 相似干扰全过）；**L2 语义重排无可测增量**（默认关闭合理）；唯一稳定失败 T122 硬 paraphrase——瓶颈为搜索词联想而非检索机制；种子零成本使总耗仅 21.3 万 tokens；详见 `docs/batch-e2e-batch6-report.md` |
+| 2026-08-03 | **查询扩展（QE）验收**（T122-T125 硬 paraphrase × mem-default/mem-qe × 2 采样） | deepseek-chat | 均轮 3.1 / 3.0 | **5/8 vs 8/8** | ~6s/run | **Multi-Query 扩展落地**：L1 失配时 LLM 生成同义变体再检索（命中零成本）；曾双臂 0/2 的 T122 在 qe 臂 2/2 复活，default 臂的搜索词运气型分裂（T123）被稳定为 2/2；总耗约 4 万 tokens |
 
 ### 详细说明
 

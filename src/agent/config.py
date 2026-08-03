@@ -100,6 +100,7 @@ class MemoryConfig(BaseModel):
         "api_key", "password", "secret", "token", "private_key",
     ])
     llm_extraction_enabled: bool = False
+    query_expansion_enabled: bool = False  # 查询扩展：L1 失配时 LLM 生成同义变体再检索
     max_age_days: int | None = None       # 记忆最大保留天数；None = 不做时间清理（默认）
     summarizer_model: str = "gpt-4o-mini"
     summarizer_max_tokens: int = 512

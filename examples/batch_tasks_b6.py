@@ -327,9 +327,53 @@ T122 = BatchTask(
     max_turns=12,
 )
 
+# ---------------------------------------------------------------------------
+# 查询扩展复验（3，QE 验收）：T122 同型硬 paraphrase
+# ---------------------------------------------------------------------------
+
+T123 = BatchTask(
+    id="T123",
+    name="QE复验-访问标识",
+    category="搜索必需",
+    difficulty="L5",
+    prompt="根据你的长期记忆，对外提供访问的那个数字标识是什么？",
+    expected_in_answer=["9187"],
+    seed_facts=["服务端口是 9187"],
+    noise_count=100,
+    target_age_days=2.0,
+    max_turns=12,
+)
+
+T124 = BatchTask(
+    id="T124",
+    name="QE复验-归谁管",
+    category="搜索必需",
+    difficulty="L5",
+    prompt="根据你的长期记忆，这个项目现在归谁管？",
+    expected_in_answer=["沈确"],
+    seed_facts=["负责人是沈确"],
+    noise_count=100,
+    target_age_days=2.0,
+    max_turns=12,
+)
+
+T125 = BatchTask(
+    id="T125",
+    name="QE复验-临界值",
+    category="搜索必需",
+    difficulty="L5",
+    prompt="根据你的长期记忆，触发通知的那个临界值是多少？",
+    expected_in_answer=["42.7"],
+    seed_facts=["告警阈值是 42.7"],
+    noise_count=100,
+    target_age_days=2.0,
+    max_turns=12,
+)
+
 BATCH6_TASKS: list[BatchTask] = [
     T103, T104, T105, T106, T107, T108, T109, T110,
     T111, T112, T113, T114, T115, T116,
     T117, T118, T119,
     T120, T121, T122,
+    T123, T124, T125,
 ]

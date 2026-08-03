@@ -954,6 +954,18 @@ class MemoryConflictDetector:
 # 管理层：编排提取、检索、注入、清理
 # ---------------------------------------------------------------------------
 
+_QE_PROMPT = """你是检索查询扩展助手。用户要在个人记忆库中搜索信息，
+但原始查询的措辞可能与记忆条目不同。
+请生成 3-5 个可能命中目标的中文或英文同义搜索词/短语。
+
+示例 1：查询「发布用的那个编号」→ 构建标签 / 构建号 / 版本标识 / 发布版本 / build tag
+示例 2：查询「控制内存占用的上限」→ 缓存阈值 / 内存上限 / cache 配额 / 阈值配置
+
+要求：每行一个变体，不要编号，不要解释，不要重复原查询。
+
+原始查询：{query}"""
+
+
 class MemoryManager:
     """长期记忆管理器，负责注入、记录、清理的生命周期。"""
 
@@ -1035,10 +1047,47 @@ class MemoryManager:
             ]
         return self._filter_readable_entries(recent)
 
+    async def _expand_and_retrieve(self, text: str) -> list[MemoryEntry]:
+        """查询扩展层（query_expansion_enabled）：LLM 生成同义变体后逐一 L1 检索。
+
+        仅在原查询 L1 失配时由 search() 调用（命中零成本）；
+        LLM 失败/无变体/变体全失配时返回 []（调用方按原 fallback 链继续）。
+        合并去重策略：entry_id 首次出现顺序保留（排前的变体结果优先）。
+        """
+        if self._llm_client is None:
+            return []
+        try:
+            response = await self._llm_client.chat(
+                [{"role": "user", "content": _QE_PROMPT.format(query=text)}],
+                temperature=0.0,
+                max_tokens=256,
+            )
+            raw = str(response.get("content", ""))
+        except Exception:
+            _logger.exception("查询扩展 LLM 调用失败")
+            return []
+        variants = [
+            line.strip().lstrip("-•*0123456789.、)） ")
+            for line in raw.splitlines()
+            if line.strip()
+        ]
+        variants = [v for v in variants if v and v != text][:5]
+        if not variants:
+            return []
+        merged: list[MemoryEntry] = []
+        seen: set[str] = set()
+        for variant in variants:
+            for entry in self._retrieve_l1(variant):
+                if entry.entry_id in seen:
+                    continue
+                seen.add(entry.entry_id)
+                merged.append(entry)
+        return merged
+
     async def search(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
         """按自然语言搜索记忆（search-then-read 的发现层）。
 
-        复用分层检索：L1 字面命中直接返回；未命中按配置走 L2/L0。
+        复用分层检索：L1 字面命中直接返回；未命中按配置走 查询扩展/L2/L0。
         空库/无命中/未启用均返回空列表（非错误）。
 
         Args:
@@ -1056,6 +1105,9 @@ class MemoryManager:
             return []
         try:
             ranked = self._retrieve_l1(text)
+            if not ranked and self._config.query_expansion_enabled:
+                # 查询扩展层（仅失配触发，命中零成本）：LLM 同义变体 → L1 再检索
+                ranked = await self._expand_and_retrieve(text)
             if (
                 not ranked
                 and self._config.semantic_retrieval

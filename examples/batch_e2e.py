@@ -52,7 +52,7 @@ except ImportError:  # 测试以 importlib 动态加载时，脚本目录不在 
 ARMS: tuple[str, ...] = ("full", "no-planner", "no-reflect")
 MEMORY_ARMS: tuple[str, ...] = ("mem", "no-mem")
 STRESS_ARMS: tuple[str, ...] = ("mem-default", "mem-semantic")
-ALL_ARMS: tuple[str, ...] = ARMS + MEMORY_ARMS + STRESS_ARMS
+ALL_ARMS: tuple[str, ...] = ARMS + MEMORY_ARMS + STRESS_ARMS + ("mem-qe",)
 SET_ARMS: dict[str, tuple[str, ...]] = {"b5": MEMORY_ARMS, "b6": STRESS_ARMS}
 TASK_SETS: dict[str, tuple[str, str]] = {
     "b1": ("batch_tasks", "BATCH_TASKS"),
@@ -199,6 +199,12 @@ def build_agent(
         # Batch 6 压力臂：只测检索层（不开 LLM 提取，避免 phase B 自提取噪声）。
         config.agent.memory.enabled = True
         config.agent.memory.semantic_retrieval = arm == "mem-semantic"
+        if memory_root is not None:
+            config.agent.memory.memory_root = memory_root
+    if arm == "mem-qe":
+        # 查询扩展验收臂：记忆开 + QE 开（同样不开 LLM 提取）。
+        config.agent.memory.enabled = True
+        config.agent.memory.query_expansion_enabled = True
         if memory_root is not None:
             config.agent.memory.memory_root = memory_root
     return Agent(

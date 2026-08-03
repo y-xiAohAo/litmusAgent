@@ -602,11 +602,11 @@ class TestB6TaskSetIntegrity:
     """b6 任务集结构完整性（Batch 6：T103-T122，记忆压力）。"""
 
     def test_task_count_and_unique_ids(self, tasks_b6):
-        """b6 应为 20 个任务且 id 唯一。"""
+        """b6 应为 23 个任务且 id 唯一（含 3 个 QE 复验任务）。"""
         tasks = tasks_b6["BATCH6_TASKS"]
         ids = [t.id for t in tasks]
-        assert len(tasks) == 20
-        assert len(set(ids)) == 20
+        assert len(tasks) == 23
+        assert len(set(ids)) == 23
 
     def test_categories_distribution(self, tasks_b6):
         """大海捞针 8 + 相似干扰 6 + 深埋旧值 3 + 搜索必需 3。"""
@@ -614,7 +614,7 @@ class TestB6TaskSetIntegrity:
         assert categories.count("大海捞针") == 8
         assert categories.count("相似干扰") == 6
         assert categories.count("深埋旧值") == 3
-        assert categories.count("搜索必需") == 3
+        assert categories.count("搜索必需") == 6
 
     def test_all_tasks_seeded_100_noise(self, tasks_b6):
         """所有任务必须有目标事实、100 条噪声、答案断言，且无工具断言。"""
