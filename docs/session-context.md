@@ -8,8 +8,8 @@
 - **质量门禁**：`pytest tests/` + `mypy src/` + `ruff check src/ tests/` 全绿
 - **测试基线**：760 passed，1 skipped（跳过项为 tiktoken 未安装）
 - **Git 状态**：`master` 分支，有未提交修改（评测日志体系）
-- **当前任务**：查询扩展（QE）落地（Multi-Query：L1 失配时 LLM 同义变体再检索；验收 qe 8/8 vs default 5/8，T122 复活；总耗约 4 万 tokens）；下一步候选：Batch 7（200+ 条压力上限 / LLM 提取质量审计）、TD-010
-- **当前规格**：`mydocs/specs/2026-08-03_23-05_query-expansion-memory.md`（SDD-RIPER-ONE）
+- **当前任务**：QE 全量回归通过（b6 23 任务 mem-qe 44/46=96% vs 基线 92%，零回归；T122 稳定 2/2）；简历 v3.4（QE 口径 + 760 基线）；下一步候选：Batch 7 立项（T73 类地雷 5 采样 / 提取质量审计 / 200+ 条压力）、TD-010
+- **当前规格**：`mydocs/specs/2026-08-03_23-05_query-expansion-memory.md`（SDD-RIPER-ONE，已归档）
 
 ---
 
