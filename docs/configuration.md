@@ -115,6 +115,10 @@ llm:
 | `semantic_retrieval` | `bool` | `False` | L2：字面检索未命中时调用 LLM 对候选记忆做语义重排（每次注入多一次 LLM 调用，失败降级 L0）。 |
 | `inject_max_entries` | `int` | `5` | 注入 system prompt 的最大条目数。 |
 | `llm_extraction_enabled` | `bool` | `False` | TD-013：是否启用 LLM 对话事实提取。开启后每轮运行结束时从对话中提取用户事实（PREFERENCES）与任务摘要（TASK_SUMMARIES），用户口头陈述的事实也能进入记忆。代价：每 `run()` 最多多一次 LLM 调用（预过滤跳过无实质输入的轮次）。 |
+| `store_backend` | `str` | `jsonl` | 记忆存储后端：`jsonl`（默认，本地文件）或 `sql`（SQLAlchemy Core，SQLite 测试 / MySQL 部署）。SQL 后端与 JSONL 行为一致性由契约测试套件双后端复验。 |
+| `sql_url` | `str \| null` | `null` | `store_backend=sql` 时的数据库连接串，如 `sqlite:////path/memory.db` 或 `mysql+pymysql://user:pass@host:3306/hermes?charset=utf8mb4`。 |
+| `cache_enabled` | `bool` | `False` | Redis 注入结果缓存：每轮 `inject()` 的检索结果按 generation 键缓存（写入/清理自动失效，TTL 300s）；Redis 不可达时静默降级为原路径。 |
+| `redis_url` | `str` | `redis://localhost:6379/0` | `cache_enabled` 时的 Redis 连接串。 |
 | `query_expansion_enabled` | `bool` | `False` | 查询扩展（Multi-Query Expansion）：`memory_search` 原查询字面检索失配时，调用 LLM 生成 3-5 个同义搜索变体逐一再检索并合并。仅在失配时触发（命中零成本），LLM 失败静默降级为原行为。修复硬 paraphrase 查询（如「发布用的编号」→「构建标签」）的检索失败。 |
 | `max_age_days` | `int \| null` | `null` | TD-013：记忆最大保留天数，超过的条目在清理时删除。`null` 表示不做时间清理（默认行为不变）。 |
 | `cleanup_on_exit` | `bool` | `False` | 是否在 Agent 关闭时执行记忆清理（配合 `max_age_days` 生效）。 |

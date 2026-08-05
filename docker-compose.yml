@@ -31,3 +31,37 @@ services:
       - sh
       - -c
       - "pip install -e '.[dev]' && tail -f /dev/null"
+
+  # 记忆系统 SQL/缓存验收环境（TD-SQL）：按需启动：
+  #   docker compose --profile memory up -d
+  mysql:
+    image: mysql:8.0
+    container_name: hermes-mysql
+    profiles: ["memory"]
+    environment:
+      - MYSQL_ROOT_PASSWORD=hermes-dev
+      - MYSQL_DATABASE=hermes
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-phermes-dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: hermes-redis
+    profiles: ["memory"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
+volumes:
+  mysql-data:

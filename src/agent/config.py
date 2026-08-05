@@ -88,6 +88,10 @@ class MemoryConfig(BaseModel):
     enabled: bool = False
     backend: str = "structured"           # 仅 structured，语义检索/图记忆预留
     memory_root: str = ".hermes/memory"
+    store_backend: str = "jsonl"          # 存储后端：jsonl（默认）/ sql（SQLAlchemy Core）
+    sql_url: str | None = None            # store_backend=sql 时的连接串（SQLite/MySQL）
+    cache_enabled: bool = False           # Redis 注入结果缓存（generation 失效 + 降级）
+    redis_url: str = "redis://localhost:6379/0"
     max_entries_per_category: int = 100
     retrieval_top_k: int = 5
     recency_fallback: bool = True        # L0：零命中时注入最近 top_k 条（防失忆）

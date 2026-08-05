@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 import logging
@@ -371,10 +372,47 @@ class StructuredMemoryStore(MemoryStore):
         return tokens
 
 
+def _entry_text_of(entry: MemoryEntry) -> str:
+    """把 entry 的 summary/tags/content 拼成可检索文本（双 store 共享，TD-SQL）。"""
+    parts = [entry.summary, " ".join(entry.tags)]
+    parts.extend(_flatten_values_shared(entry.content))
+    return " ".join(parts)
+
+
+def _flatten_values_shared(obj: Any) -> list[str]:
+    """把 dict/list 中的值展平为可检索字符串（与类内方法同逻辑）。"""
+    result: list[str] = []
+    if isinstance(obj, dict):
+        for value in obj.values():
+            result.extend(_flatten_values_shared(value))
+    elif isinstance(obj, list):
+        for item in obj:
+            result.extend(_flatten_values_shared(item))
+    elif isinstance(obj, str):
+        result.append(obj)
+    elif isinstance(obj, int | float | bool):
+        result.append(str(obj))
+    return result
+
+
+def _ensure_aware_dt(dt: datetime) -> datetime:
+    """若 datetime 缺少时区，则假设为 UTC。"""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _tokenize_text(text: str) -> set[str]:
+    """简单分词：英文按单词，中文按单字，都转小写。"""
+    lowered = text.lower()
+    tokens: set[str] = set(re.findall(r"[a-z0-9]+", lowered))
+    tokens.update(re.findall(r"[\u4e00-\u9fff]", lowered))
+    return tokens
+
+
 # ---------------------------------------------------------------------------
 # 提取层：从 Trace/State 生成 MemoryEntry
 # ---------------------------------------------------------------------------
-
 class MemoryExtractor(ABC):
     """记忆提取器抽象。
 
@@ -977,6 +1015,7 @@ class MemoryManager:
         llm_extractor: Any | None = None,
         policy: PolicyEngine | None = None,
         llm_client: Any | None = None,
+        cache: Any | None = None,
     ) -> None:
         """初始化管理器。
 
@@ -988,6 +1027,8 @@ class MemoryManager:
                 或可 await 列表，如 LLMMemoryExtractor）；失败时不影响规则提取。
             policy: 可选的安全策略引擎；未注入时不做读写权限检查。
             llm_client: 可选的 LLM 客户端，用于 L2 语义重排（分层检索）。
+            cache: 可选的 Redis 风格客户端（get/setex/incr，duck-typed），
+                用于 inject 结果缓存；不可达时静默降级为原路径。
         """
         self._store = store
         self._extractor = extractor
@@ -995,6 +1036,7 @@ class MemoryManager:
         self._llm_extractor = llm_extractor
         self._policy = policy
         self._llm_client = llm_client
+        self._cache = cache
 
     def inject(self, user_input: str) -> str:
         """根据用户输入检索相关记忆并返回注入片段。
@@ -1003,6 +1045,9 @@ class MemoryManager:
           1. L1：按字符/token 重叠召回 retrieval_top_k * 2 条候选并排序；
           2. L0：未命中且 recency_fallback 开启时，兜底注入最近 N 条。
           3. 交给 MemoryInjector 按 token/条目数限制格式化。
+
+        缓存（cache_enabled 时）：结果按 generation 键缓存，任何写入/清理
+        使 generation 递增、旧键天然失效；Redis 不可达时静默降级为原路径。
 
         Args:
             user_input: 当前用户输入。
@@ -1017,6 +1062,20 @@ class MemoryManager:
         if not text:
             return ""
 
+        gen = self._cache_generation()
+        if gen is not None:
+            cached = self._cache_read(gen, text)
+            if cached is not None:
+                return cached
+
+        result = self._compute_injection(text)
+
+        if gen is not None and result:
+            self._cache_write(gen, text, result)
+        return result
+
+    def _compute_injection(self, text: str) -> str:
+        """原注入路径：L1 检索 → L0 兜底 → 格式化。"""
         try:
             ranked = self._retrieve_l1(text)
             if not ranked and self._config.recency_fallback:
@@ -1026,6 +1085,65 @@ class MemoryManager:
         except Exception:
             _logger.exception("记忆注入失败")
             return ""
+
+    # ------------------------------------------------------------------
+    # Redis 缓存（generation 失效 + TTL + 静默降级）
+    # ------------------------------------------------------------------
+
+    def _cache_generation(self) -> int | None:
+        """读取当前缓存 generation；缓存未配置或不可达时返回 None。"""
+        if self._cache is None:
+            return None
+        try:
+            raw = self._cache.get(self._cache_gen_key())
+            return int(raw) if raw is not None else 0
+        except Exception:
+            _logger.warning("记忆缓存读取 generation 失败，降级为原路径")
+            return None
+
+    def _cache_read(self, gen: int, text: str) -> str | None:
+        """按 generation + 输入哈希读缓存；异常返回 None（降级）。"""
+        if self._cache is None:
+            return None
+        try:
+            raw = self._cache.get(self._cache_inj_key(gen, text))
+            if raw is None:
+                return None
+            return raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+        except Exception:
+            _logger.warning("记忆缓存读取失败，降级为原路径")
+            return None
+
+    def _cache_write(self, gen: int, text: str, value: str) -> None:
+        """写缓存（TTL 300s 兜底防陈旧）；异常静默忽略。"""
+        if self._cache is None:
+            return
+        try:
+            self._cache.setex(self._cache_inj_key(gen, text), 300, value)
+        except Exception:
+            _logger.warning("记忆缓存写入失败，忽略")
+
+    def _bump_cache_generation(self) -> None:
+        """写入/清理后递增 generation，旧缓存键天然失效。"""
+        if self._cache is None:
+            return
+        try:
+            self._cache.incr(self._cache_gen_key())
+        except Exception:
+            _logger.warning("记忆缓存 generation 递增失败，忽略")
+
+    def _cache_gen_key(self) -> str:
+        """generation 键（按记忆库根目录隔离）。"""
+        return f"hermes:mem:gen:{self._cache_namespace()}"
+
+    def _cache_inj_key(self, gen: int, text: str) -> str:
+        """注入缓存键：命名空间 + generation + 输入哈希。"""
+        digest = hashlib.sha1(text.encode("utf-8")).hexdigest()
+        return f"hermes:mem:inj:{self._cache_namespace()}:{gen}:{digest}"
+
+    def _cache_namespace(self) -> str:
+        """缓存命名空间（memory_root 路径哈希，隔离不同记忆库）。"""
+        return hashlib.sha1(str(self._config.memory_root).encode("utf-8")).hexdigest()[:12]
 
     def _retrieve_l1(self, text: str) -> list[MemoryEntry]:
         """L1 字面检索 + 二次排序（不含任何兜底）。"""
@@ -1396,6 +1514,8 @@ class MemoryManager:
             saved: list[MemoryEntry] = []
             for entry in allowed_entries:
                 saved.append(self._save_entry(entry))
+            if saved:
+                self._bump_cache_generation()
             return saved
         except Exception:
             _logger.exception("记忆记录失败")
@@ -1515,7 +1635,10 @@ class MemoryManager:
         if max_age_days is None:
             return 0
         try:
-            return self._store.cleanup(timedelta(days=max_age_days))
+            deleted = self._store.cleanup(timedelta(days=max_age_days))
+            if deleted:
+                self._bump_cache_generation()
+            return deleted
         except Exception:
             _logger.exception("记忆清理失败")
             return 0

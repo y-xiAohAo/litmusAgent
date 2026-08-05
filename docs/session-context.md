@@ -6,10 +6,10 @@
 - **已完成**：Phase 10.9 —— Demo 脚本与录制准备（demo_real_llm.py / test_demo.py / demo.md）
 - **已完成**：评测日志体系（evaluation-log.md / evaluation-spec.md / test_evaluation_log.py）
 - **质量门禁**：`pytest tests/` + `mypy src/` + `ruff check src/ tests/` 全绿
-- **测试基线**：760 passed，1 skipped（跳过项为 tiktoken 未安装）
+- **测试基线**：786 passed，1 skipped（跳过项为 tiktoken 未安装）
 - **Git 状态**：`master` 分支，有未提交修改（评测日志体系）
-- **当前任务**：QE 全量回归通过（b6 23 任务 mem-qe 44/46=96% vs 基线 92%，零回归；T122 稳定 2/2）；简历 v3.4（QE 口径 + 760 基线）；下一步候选：Batch 7 立项（T73 类地雷 5 采样 / 提取质量审计 / 200+ 条压力）、TD-010
-- **当前规格**：`mydocs/specs/2026-08-03_23-05_query-expansion-memory.md`（SDD-RIPER-ONE，已归档）
+- **当前任务**：记忆存储升级完成（SQL 后端契约双后端 22 项全绿 + Redis 缓存 generation 失效；真实 MySQL/Redis 容器验收 + b6 子集 mem-sql 端到端 PASS）；下一步候选：简历"存储与缓存工程"bullet 并入（R3）、Batch 7（T73 显著性/提取审计）、TD-010
+- **当前规格**：`mydocs/specs/2026-08-04_09-30_memory-sql-redis.md`（SDD-RIPER-ONE）
 
 ---
 

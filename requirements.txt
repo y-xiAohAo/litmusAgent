@@ -8,6 +8,10 @@ docker>=7.0.0
 fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
 jinja2>=3.1.0
+sqlalchemy>=2.0.0
+redis>=5.0.0
+pymysql>=1.1.0
+cryptography>=42.0.0
 
 # LLM providers (optional — install as needed)
 # openai>=1.0.0

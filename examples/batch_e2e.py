@@ -52,7 +52,7 @@ except ImportError:  # 测试以 importlib 动态加载时，脚本目录不在 
 ARMS: tuple[str, ...] = ("full", "no-planner", "no-reflect")
 MEMORY_ARMS: tuple[str, ...] = ("mem", "no-mem")
 STRESS_ARMS: tuple[str, ...] = ("mem-default", "mem-semantic")
-ALL_ARMS: tuple[str, ...] = ARMS + MEMORY_ARMS + STRESS_ARMS + ("mem-qe",)
+ALL_ARMS: tuple[str, ...] = ARMS + MEMORY_ARMS + STRESS_ARMS + ("mem-qe", "mem-sql")
 SET_ARMS: dict[str, tuple[str, ...]] = {"b5": MEMORY_ARMS, "b6": STRESS_ARMS}
 TASK_SETS: dict[str, tuple[str, str]] = {
     "b1": ("batch_tasks", "BATCH_TASKS"),
@@ -207,6 +207,12 @@ def build_agent(
         config.agent.memory.query_expansion_enabled = True
         if memory_root is not None:
             config.agent.memory.memory_root = memory_root
+    if arm == "mem-sql":
+        # SQL 后端验收臂：记忆开 + SQL 存储（SQLite 文件随 memory_root）。
+        config.agent.memory.enabled = True
+        config.agent.memory.store_backend = "sql"
+        if memory_root is not None:
+            config.agent.memory.sql_url = f"sqlite:///{memory_root}/memory.db"
     return Agent(
         llm_client=client,
         config=config,
@@ -215,26 +221,47 @@ def build_agent(
     )
 
 
-def seed_memory(root: Path, task: BatchTask) -> None:
+def seed_memory(root: Path, task: BatchTask, backend: str = "jsonl") -> None:
     """程序化预置记忆库（Batch 6 压力测试，零 API 成本）。
 
     写入目标事实（seed_facts）+ 相似干扰（seed_decoys）+ 确定性背景噪声
     （noise_count 条 svc-i/param-i）。目标条目按 target_age_days 回填时间
-    （深埋控制：store.save 会刷新 updated_at，需事后改写文件时间戳）；
+    （深埋控制：store.save 会刷新 updated_at，需事后改写时间戳）；
     噪声条目年龄分布在最近一天内，保证全部比目标新（recency 把目标顶出
     L0 注入窗口，检索必须靠 L1/L2/搜索）。
-    """
-    from agent.core.memory import MemoryCategory, MemoryEntry, StructuredMemoryStore
 
-    store = StructuredMemoryStore(root)
+    backend="sql" 时经 SqlMemoryStore 预置（b6 SQL 后端验收路径）。
+    """
+    from agent.core.memory import MemoryCategory, MemoryEntry, MemoryStore
+    from agent.core.memory import StructuredMemoryStore
+
+    store: MemoryStore
+    if backend == "sql":
+        from agent.core.memory_sql_store import ENTRIES_TABLE, SqlMemoryStore
+
+        sql_store = SqlMemoryStore(f"sqlite:///{root / 'memory.db'}")
+        store = sql_store
+    else:
+        sql_store = None
+        store = StructuredMemoryStore(root)
 
     def _age_file(entry: MemoryEntry, days: float) -> None:
-        file_path = root / entry.category.value / f"{entry.entry_id}.jsonl"
-        data = json.loads(file_path.read_text(encoding="utf-8"))
-        ts = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-        data["created_at"] = ts
-        data["updated_at"] = ts
-        file_path.write_text(json.dumps(data, ensure_ascii=False) + "\n", encoding="utf-8")
+        ts = datetime.now(timezone.utc) - timedelta(days=days)
+        if sql_store is not None:
+            import sqlalchemy as sa
+
+            with sql_store._engine.begin() as conn:
+                conn.execute(
+                    sa.update(ENTRIES_TABLE)
+                    .where(ENTRIES_TABLE.c.entry_id == entry.entry_id)
+                    .values(updated_at=ts, created_at=ts)
+                )
+        else:
+            file_path = root / entry.category.value / f"{entry.entry_id}.jsonl"
+            data = json.loads(file_path.read_text(encoding="utf-8"))
+            data["created_at"] = ts.isoformat()
+            data["updated_at"] = ts.isoformat()
+            file_path.write_text(json.dumps(data, ensure_ascii=False) + "\n", encoding="utf-8")
 
     for i, fact in enumerate(task.seed_facts):
         entry = MemoryEntry(
@@ -343,7 +370,11 @@ async def run_one(
             memory_root: Path | None = None
             if task.noise_count or task.seed_facts or task.seed_decoys:
                 memory_root = Path(tempfile.mkdtemp(prefix="batch-seed-"))
-                seed_memory(memory_root, task)
+                seed_memory(
+                    memory_root,
+                    task,
+                    backend="sql" if arm == "mem-sql" else "jsonl",
+                )
             try:
                 agent = build_agent(
                     task,

@@ -21,7 +21,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agent.core.context_cache import ContextCache
-from agent.core.memory import MemoryManager, RuleMemoryExtractor, StructuredMemoryStore
+from agent.core.memory import (
+    MemoryManager,
+    MemoryStore,
+    RuleMemoryExtractor,
+    StructuredMemoryStore,
+)
 from agent.core.state import ExecutionContext
 
 if TYPE_CHECKING:
@@ -85,13 +90,37 @@ class RuntimeServices:
                 from agent.core.memory_llm_extractor import LLMMemoryExtractor
 
                 llm_extractor = LLMMemoryExtractor(llm_client)
+            # 存储后端工厂（jsonl 默认 / sql 可选）。
+            store: MemoryStore
+            if memory_config.store_backend == "sql":
+                if not memory_config.sql_url:
+                    raise ValueError("store_backend=sql 需要配置 memory.sql_url")
+                from agent.core.memory_sql_store import SqlMemoryStore
+
+                store = SqlMemoryStore(memory_config.sql_url)
+            else:
+                store = StructuredMemoryStore(root_dir=Path(memory_config.memory_root))
+            # Redis 注入缓存（不可达静默降级为无缓存）。
+            cache: Any | None = None
+            if memory_config.cache_enabled:
+                try:
+                    import redis
+
+                    candidate = redis.Redis.from_url(
+                        memory_config.redis_url, socket_timeout=2
+                    )
+                    candidate.ping()
+                    cache = candidate
+                except Exception:
+                    cache = None
             memory_manager = MemoryManager(
-                store=StructuredMemoryStore(root_dir=Path(memory_config.memory_root)),
+                store=store,
                 extractor=RuleMemoryExtractor(),
                 config=memory_config,
                 policy=policy,
                 llm_client=llm_client,
                 llm_extractor=llm_extractor,
+                cache=cache,
             )
 
         return cls(
