@@ -143,6 +143,10 @@ class MemoryStore(ABC):
     ) -> list[MemoryEntry]:
         """列出记忆条目；可指定类别。"""
 
+    @abstractmethod
+    def list_recent(self, limit: int) -> list[MemoryEntry]:
+        """按 updated_at 倒序返回最近 limit 条（L0 recency 兜底依赖此契约）。"""
+
 
 class StructuredMemoryStore(MemoryStore):
     """基于本地 JSONL 文件的结构化存储实现。
@@ -1157,12 +1161,7 @@ class MemoryManager:
 
     def _recency_fallback(self) -> list[MemoryEntry]:
         """L0 recency 兜底：返回经读策略过滤的最近 top_k 条记忆。"""
-        if hasattr(self._store, "list_recent"):
-            recent = self._store.list_recent(max(1, self._config.retrieval_top_k))
-        else:
-            recent = self._store.list_entries()[
-                : max(1, self._config.retrieval_top_k)
-            ]
+        recent = self._store.list_recent(max(1, self._config.retrieval_top_k))
         return self._filter_readable_entries(recent)
 
     async def _expand_and_retrieve(self, text: str) -> list[MemoryEntry]:
