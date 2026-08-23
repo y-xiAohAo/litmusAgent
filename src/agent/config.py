@@ -305,6 +305,11 @@ class SandboxConfig(BaseModel):
     memory_limit_mb: int = 256         # 内存上限（MB）
     volume_name: str | None = None     # 持久卷名 → 实际卷 litmus-ws-<volume_name>
     host_dir: str | None = None        # 宿主目录 bind 挂载（单元 C）
+    # TD-010：容器池网络模式，原样透传给 Docker（none/bridge/...），默认禁网。
+    network_mode: str = "none"
+    # TD-010：安装阶段自动放行——pip install 意图的执行改用有网（bridge）
+    # 临时容器，用完即销毁不入池；其余执行仍走禁网池。默认关闭。
+    allow_setup_network: bool = False
 
     @model_validator(mode="after")
     def _validate_workspace_fields(self) -> SandboxConfig:

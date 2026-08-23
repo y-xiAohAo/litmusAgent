@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import re
 
 from agent.core.state import ExecutionContext
@@ -78,6 +79,19 @@ def _extract_pip_packages(code: str) -> list[str]:
     return packages
 
 
+def _supports_allow_network(backend: SandboxBackend) -> bool:
+    """探测后端 `execute_code` 是否支持 `allow_network` 参数（TD-010）。
+
+    与 `file_list` 探测可选能力 `list_dir`、engine 探测 `execution_context`
+    同一先例：`inspect.signature` 查不到签名时按不支持处理（向后兼容
+    第三方自定义后端）。
+    """
+    try:
+        return "allow_network" in inspect.signature(backend.execute_code).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 async def sandbox_exec(
     code: str,
     backend: SandboxBackend,
@@ -96,6 +110,11 @@ async def sandbox_exec(
       - TD-004：传入 execution_context 时，成功执行后把代码中的
         `pip install` 包名记录到 `packages_installed` 键，供后续
         tool call 判断"已安装"状态。
+      - TD-010：后端开启 `allow_setup_network`（实例属性
+        `setup_network_enabled`）且代码含 pip install 意图、后端支持
+        `allow_network` 参数时，以 `allow_network=True` 执行——Docker
+        后端改用有网临时容器（用完销毁不入池），支撑缺库自愈。
+        配置关闭或后端不支持时行为完全不变。
 
     参数：
         code: 要执行的 Python 源代码。
@@ -106,10 +125,18 @@ async def sandbox_exec(
         ToolResult。成功时 content 为 stdout；失败时 content 为 stderr，
         success 为 False。
     """
-    result: ExecutionResult = await backend.execute_code(code)
+    packages = _extract_pip_packages(code)
+    allow_network = (
+        bool(getattr(backend, "setup_network_enabled", False))
+        and bool(packages)
+        and _supports_allow_network(backend)
+    )
+    if allow_network:
+        result: ExecutionResult = await backend.execute_code(code, allow_network=True)
+    else:
+        result = await backend.execute_code(code)
     if result.success:
         if execution_context is not None:
-            packages = _extract_pip_packages(code)
             if packages:
                 installed: list[str] = execution_context.get("packages_installed", [])
                 for pkg in packages:

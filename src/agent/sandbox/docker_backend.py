@@ -73,6 +73,8 @@ class DockerSandboxBackend:
         cleanup_workspace: bool = True,
         image_registry: str | None = None,
         workspace_bind: str | None = None,
+        network_mode: str = "none",
+        allow_setup_network: bool = False,
     ) -> None:
         """初始化 Docker 后端。
 
@@ -88,10 +90,18 @@ class DockerSandboxBackend:
                 （替代命名卷）。POSIX 下容器以宿主 uid:gid 运行并跳过
                 chown 65534；Windows 维持 nobody（Docker Desktop 文件共享
                 层自动映射属主）。宿主机目录不属于后端资产，close 不清理。
+            network_mode: TD-010——容器池的网络模式，原样透传给 Docker
+                （none/bridge/...），默认 "none" 禁网。
+            allow_setup_network: TD-010——安装阶段自动放行开关。存为实例
+                属性 `setup_network_enabled` 供工具层查询；为 True 时
+                `execute_code(allow_network=True)` 会现场创建有网（bridge）
+                临时容器执行，用完即销毁不入池。
         """
         self.image: str = image
         self.timeout: int = timeout
         self.image_registry: str | None = image_registry
+        self.network_mode: str = network_mode
+        self.setup_network_enabled: bool = allow_setup_network
         self.workspace_volume: str = (
             workspace_volume or f"hermes-workspace-{uuid.uuid4().hex[:8]}"
         )
@@ -229,27 +239,37 @@ class DockerSandboxBackend:
                 client.containers.create,
                 **create_kwargs,
             )
-            await asyncio.to_thread(container.start)
-            # EVAL-010：workspace volume 默认 root 属主，容器内 nobody 无法写入。
-            # 创建后以 root 将 volume 属主改为 nobody（uid/gid 65534，Debian 系
-            # 镜像标准 nobody），保证工具写入与沙箱代码写入权限一致。
-            # 数字 uid 不依赖用户存在；失败仅警告降级，不阻塞容器创建。
-            # TD-015 单元 C：bind 模式跳过 chown——不篡改宿主文件属主。
-            if self.workspace_bind is None:
-                try:
-                    exit_code, output = await asyncio.to_thread(
-                        container.exec_run,
-                        "chown -R 65534:65534 /workspace",
-                        user="root",
-                    )
-                    if exit_code != 0:
-                        logger.warning(
-                            "workspace chown 失败（exit=%s）：%s",
-                            exit_code,
-                            output,
+            # create 成功后 start 等后续步骤若失败，必须兜底删除已创建的容器，
+            # 否则返回 None 的调用方无法感知该容器，造成容器泄漏。
+            try:
+                await asyncio.to_thread(container.start)
+                # EVAL-010：workspace volume 默认 root 属主，容器内 nobody 无法写入。
+                # 创建后以 root 将 volume 属主改为 nobody（uid/gid 65534，Debian 系
+                # 镜像标准 nobody），保证工具写入与沙箱代码写入权限一致。
+                # 数字 uid 不依赖用户存在；失败仅警告降级，不阻塞容器创建。
+                # TD-015 单元 C：bind 模式跳过 chown——不篡改宿主文件属主。
+                if self.workspace_bind is None:
+                    try:
+                        exit_code, output = await asyncio.to_thread(
+                            container.exec_run,
+                            "chown -R 65534:65534 /workspace",
+                            user="root",
                         )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("workspace chown 执行异常：%s", exc)
+                        if exit_code != 0:
+                            logger.warning(
+                                "workspace chown 失败（exit=%s）：%s",
+                                exit_code,
+                                output,
+                            )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("workspace chown 执行异常：%s", exc)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("容器创建后启动失败，兜底清理已创建容器：%s", exc)
+                try:
+                    await asyncio.to_thread(container.remove, force=True)
+                except Exception as rm_exc:  # noqa: BLE001
+                    logger.warning("失败容器兜底清理异常（容器可能残留）：%s", rm_exc)
+                return None
             return container
         except Exception:
             return None
@@ -316,7 +336,7 @@ class DockerSandboxBackend:
             部分失败时，已经成功创建的容器会保留在池中。
         """
         for _ in range(count):
-            container = await self._do_create_container()
+            container = await self._do_create_container(network_mode=self.network_mode)
             if container is None:
                 return False
             self._pool.append(container)
@@ -330,7 +350,7 @@ class DockerSandboxBackend:
         """
         if self._pool:
             return self._pool.pop()
-        return await self._do_create_container()
+        return await self._do_create_container(network_mode=self.network_mode)
 
     async def _release_and_replenish(self, container: Container) -> None:
         """释放使用过的容器，并尝试补充一个新容器到池中。
@@ -347,7 +367,7 @@ class DockerSandboxBackend:
         except Exception:
             pass
 
-        replacement = await self._do_create_container()
+        replacement = await self._do_create_container(network_mode=self.network_mode)
         if replacement is not None:
             self._pool.append(replacement)
 
@@ -368,10 +388,24 @@ class DockerSandboxBackend:
         except Exception:
             return False
 
+    async def _destroy_ephemeral_container(self, container: Container) -> None:
+        """销毁有网临时容器（TD-010）——不入池、不补充，异常仅告警降级。
+
+        参数：
+            container: 需要销毁的临时容器。
+        """
+        try:
+            await asyncio.to_thread(container.stop)
+            await asyncio.to_thread(container.remove)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("有网临时容器销毁失败（容器可能残留）：%s", exc)
+
     async def execute_code(
         self,
         code: str,
         timeout: int | None = None,
+        *,
+        allow_network: bool = False,
     ) -> ExecutionResult:
         """在容器内执行 Python 代码并返回结果。
 
@@ -380,6 +414,9 @@ class DockerSandboxBackend:
         参数：
             code: 要执行的 Python 源代码。
             timeout: 执行超时时间（秒），None 表示使用 backend 默认值。
+            allow_network: TD-010——True 时现场创建一个有网（bridge）临时
+                容器执行（同一 workspace 卷/bind 挂载，其余加固不变），
+                用完立即销毁、不入池；False 维持现状（走禁网容器池）。
 
         返回：
             ExecutionResult，包含退出码、stdout、stderr 和成功标志。
@@ -395,7 +432,11 @@ class DockerSandboxBackend:
 
         container: Container | None = None
         try:
-            container = await self._acquire_container()
+            if allow_network:
+                # 有网临时容器：固定 bridge（最小暴露面），不入池。
+                container = await self._do_create_container(network_mode="bridge")
+            else:
+                container = await self._acquire_container()
             if container is None:
                 return ExecutionResult(
                     exit_code=-1,
@@ -456,7 +497,11 @@ class DockerSandboxBackend:
             )
         finally:
             if container is not None:
-                await self._release_and_replenish(container)
+                if allow_network:
+                    # 有网临时容器用完即销毁，不回池也不补充（池语义不变）。
+                    await self._destroy_ephemeral_container(container)
+                else:
+                    await self._release_and_replenish(container)
 
     async def put_file(self, container_path: str, content: bytes) -> bool:
         """把文件内容注入容器内指定路径。

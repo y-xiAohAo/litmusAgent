@@ -43,8 +43,15 @@ class SandboxBackend(Protocol):
         """检查后端是否可用。"""
         ...
 
-    async def execute_code(self, code: str, timeout: int | None = None) -> ExecutionResult:
-        """在沙箱中执行 Python 代码并返回结果。"""
+    async def execute_code(
+        self, code: str, timeout: int | None = None, *, allow_network: bool = False
+    ) -> ExecutionResult:
+        """在沙箱中执行 Python 代码并返回结果。
+
+        allow_network（TD-010）：True 时后端可为本次执行放行网络
+        （如 Docker 后端现场创建有网临时容器）；不支持网络控制的后端
+        接受并忽略该参数。
+        """
         ...
 
     async def put_file(self, container_path: str, content: bytes) -> bool:

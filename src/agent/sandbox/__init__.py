@@ -49,18 +49,32 @@ def create_sandbox_backend(config: SandboxConfig | None = None) -> SandboxBacken
     timeout = config.timeout if config is not None else 30
     volume_name = config.volume_name if config is not None else None
     host_dir = config.host_dir if config is not None else None
+    # TD-010：网络策略两个字段（默认 none + False，零行为回归）。
+    network_mode = config.network_mode if config is not None else "none"
+    allow_setup_network = (
+        config.allow_setup_network if config is not None else False
+    )
 
     if backend == "docker":
         # TD-015 单元 B：volume_name → 固定卷 litmus-ws-<name> 且关闭时保留；
         # 未配置 → 随机卷 + 关闭时清理（现状语义）。
         # TD-015 单元 C：host_dir → 宿主目录 bind 挂载替代命名卷。
         if host_dir is not None:
+            if allow_setup_network:
+                # TD-010 §4.5：bind + 有网 = 攻击面叠加，显式开启时告警。
+                logger.warning(
+                    "host_dir（bind 模式）下显式开启了 allow_setup_network："
+                    "pip 意图的执行将在有网（bridge）容器中直写宿主目录，"
+                    "请确认已评估攻击面叠加风险。"
+                )
             bind_backend = DockerSandboxBackend(
                 image=config.image if config is not None else "python:3.11-slim",
                 timeout=timeout,
                 image_registry=config.image_registry if config is not None else None,
                 workspace_bind=host_dir,
                 cleanup_workspace=False,
+                network_mode=network_mode,
+                allow_setup_network=allow_setup_network,
             )
             if not _docker_available(bind_backend):
                 raise ValueError(
@@ -75,6 +89,8 @@ def create_sandbox_backend(config: SandboxConfig | None = None) -> SandboxBacken
             image_registry=config.image_registry if config is not None else None,
             workspace_volume=f"litmus-ws-{volume_name}" if volume_name is not None else None,
             cleanup_workspace=volume_name is None,
+            network_mode=network_mode,
+            allow_setup_network=allow_setup_network,
         )
     if backend == "subprocess":
         if volume_name is not None:

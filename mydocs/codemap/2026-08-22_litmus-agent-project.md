@@ -1,7 +1,7 @@
 # CodeMap — Litmus Agent 项目总图（project mode）
 
 > 生成：2026-08-22（SDD-RIPER-ONE `create_codemap`，project 模式，drift-check 后重建）
-> 验证基线：`pytest tests/` = **863 passed, 1 skipped**（2026-08-22 实测，TD-015 单元 C 落地后）；mypy 51 文件零错误；ruff 全绿
+> 验证基线：`pytest tests/` = **901 passed, 1 skipped**（2026-08-22 实测，TD-010 + CR 回炉后）；mypy 51 文件零错误；ruff 全绿
 > 上一版：`2026-07-17_20-38_hermes-agent-project.md`（41 文件/541 用例，已过期）
 > 用途：代码库索引与上下文切片。后续会话按需按路径回读，不全量扫描。
 
@@ -142,7 +142,7 @@ sequenceDiagram
 
 ---
 
-## 5. 测试地形（59 个测试文件，863 passed / 1 skipped）
+## 5. 测试地形（60 个测试文件，901 passed / 1 skipped）
 
 - 单元：`test_config / test_logging / test_core / test_agent_loop / test_state / test_planner / test_tool_router / test_llm_client`
 - 沙箱/工具：`test_sandbox / test_tools / test_tool_security / test_sandbox_security / test_subprocess_backend / test_sandbox_factory`
@@ -171,14 +171,14 @@ sequenceDiagram
 1. ~~venv 依赖漂移~~（2026-08-22 已修：`pip install fakeredis sqlalchemy` 后全量基线 786 passed / 1 skipped，mypy/ruff 全绿）。
 2. **未提交改动**：`.kimi/vibe_specs/technical-debt-spec.md`、`docs/session-context.md`。
 3. 旧 codemap 风险已消解：TD-002（subprocess 沙箱）、Web UI、runtime 装配均已提交。
-4. 未决 TD（以 technical-debt-spec.md 为准）：TD-010 沙箱网络策略增强（唯一剩余候选）；TD-014/TD-015 均已完成（TD-015 真实 Docker 验证 10/10 通过，2026-08-22）。注意：grep/glob 进入默认工具集后，批量评测新旧批次 token/成功率不可直接对比，需重新基线。
+4. 未决 TD：**技术债总表已清零**（TD-001~015 全部完成，2026-08-22）。遗留非债事项：批量评测重新基线（grep/glob 进默认工具集后新旧批次口径不可比）；`memory_limit_mb` 配置存在但工厂未透传（TD-010 调研发现的既有遗漏）。
 5. `OpenAIClient` 缺流式输出（功能缺口）。
 
 ## 9. 常用命令
 
 ```bash
 source .venv/Scripts/activate
-python -m pytest tests/ -q        # 基线 863 passed, 1 skipped
+python -m pytest tests/ -q        # 基线 901 passed, 1 skipped
 python -m mypy src/               # strict
 python -m ruff check src/ tests/  # 行宽 100
 ```

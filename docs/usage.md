@@ -297,6 +297,31 @@ Agent 同时挂载同一个目录。
 
 ---
 
+## 沙箱网络策略（TD-010）
+
+默认所有沙箱容器以 `network_mode: none` 禁网运行，加固面不变。需要网络时有两种
+受控开口（仅 `docker` 后端）：
+
+```yaml
+sandbox:
+  network_mode: bridge        # ① 整体放开：容器池全部按 bridge 创建
+  allow_setup_network: true   # ② 仅安装阶段放行：pip install 意图的执行
+                              #    改用有网临时容器（用完即销毁不入池）
+```
+
+- 两个字段默认 `none` + `false`，与旧版行为完全一致。
+- `allow_setup_network` 是便利开关而非安全边界：`pip install` 意图由静态
+  启发式（字符串/正则级匹配）识别，可能被 prompt injection 诱导，也可能被
+  代码里的字面量误触发——例如 `x = "pip install curl"` 这样的字符串同样会
+  放网；有网容器仍维持 non-root、read_only 根文件系统与同一 workspace 挂载。
+- `bridge`/有网临时容器可经 docker0 网关访问宿主机内网（含云厂商 metadata
+  服务 169.254.169.254），在公网或内网敏感环境慎用。
+- bind（`host_dir`）模式下开启 `allow_setup_network` 会打 warning
+  （有网 + 直写宿主目录 = 攻击面叠加），慎用。
+- `subprocess` 后端不做网络隔离，`allow_network` 参数被接受并忽略。
+
+---
+
 ## 批量评测（Batch E2E）
 
 项目内置批量评测体系，用于在真实 LLM 上量化 Agent 机制效果（规划/反思对照实验）：

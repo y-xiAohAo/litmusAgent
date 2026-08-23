@@ -155,6 +155,8 @@ agent:
 | `memory_limit_mb` | `int` | `256` | 容器内存上限（MB）。 |
 | `volume_name` | `str \| null` | `null` | 持久工作区卷名（TD-015 单元 B，仅 `docker` 后端）。配置后使用固定 Docker 卷 `litmus-ws-<volume_name>`，跨会话保留 `/workspace` 文件且关闭时不删除；`null` 时使用随机卷并在关闭时清理。只允许字母、数字、`_`、`.`、`-`。 |
 | `host_dir` | `str \| null` | `null` | 宿主机目录 bind 挂载（TD-015 单元 C）。配置后 Agent 直接操作宿主机真实项目目录（容器内 `/workspace` → `host_dir`），与 `volume_name` 互斥。详见下方"bind 工作区模式"警示。 |
+| `network_mode` | `str` | `none` | 容器池网络模式（TD-010，仅 `docker` 后端），原样透传给 Docker（`none`/`bridge`/...）。默认 `none` 禁网。注意 `bridge` 等模式可经 docker0 网关访问宿主机内网（含云 metadata 169.254.169.254），内网敏感环境慎用。 |
+| `allow_setup_network` | `bool` | `False` | 安装阶段自动放行（TD-010，仅 `docker` 后端）。为 `True` 时，`sandbox_exec` 检测到 `pip install` 意图的执行改用有网（`bridge`）临时容器（同一 workspace 卷/bind 挂载，其余加固不变），用完即销毁不入池；其余执行仍走禁网池。是便利开关而非安全边界——pip 意图是字符串/正则级启发式，可被 prompt injection 诱导、也会被代码里的字面量（如 `x = "pip install curl"`）误触发；且 bridge 容器可经 docker0 网关访问宿主机内网（含云 metadata 169.254.169.254），bind 模式下开启会打 warning（攻击面叠加），公网/内网敏感环境慎用。 |
 
 > **⚠️ bind 工作区模式（host_dir）风险警示**
 >
@@ -164,6 +166,8 @@ agent:
 > 2. **写确认默认开启**：未显式配置 `agent.human_approval.enabled` 时按 `true` 生效（`file_write`/`file_edit` 执行前询问 `y/n/a`）；非交互环境（无 TTY / 管道）下默认**拒绝**写操作。显式设 `false` 可关闭，但会打 warning，风险自担。**Web UI 无确认界面**：检测到 `host_dir` 且未显式关闭审批时拒绝启动并提示。
 > 3. **敏感文件 read deny**：默认注入优先级 90 的读拒绝规则：`**/.env*`、`**/.ssh/**`、`**/*.{pem,key}`、`**/id_rsa*`、`**/.git/**`。`security.enabled` 未显式配置时按 `true` 生效；显式关闭打 warning。注意该策略约束的是**工具层**访问（`grep`/`glob` 内嵌脚本另按同口径硬编码兜底过滤）；容器内 `sandbox_exec` 执行的代码**不受策略约束**——bind 模式的真实边界是**挂载点 + git 快照 + 写确认**三件套，read deny 仅为辅助。
 > 4. **容器加固维持**：network=none、read_only 根文件系统 + tmpfs、无特权、不挂 docker.sock；bind 模式容器设 `HOME=/tmp`，POSIX 下以宿主 `uid:gid` 运行（保证写出文件属主正确）并跳过 chown；Windows 维持 nobody（Docker Desktop 文件共享层自动映射属主）。
+>
+> **⚠️ 追加警示（TD-010）**：bind 模式下再显式开启 `allow_setup_network: true` 属于攻击面叠加——pip 意图的执行会在**有网（bridge）容器中直写宿主目录**，工厂会打 warning。且 bridge 容器可经 docker0 网关访问宿主机内网（含云 metadata 服务 169.254.169.254），内网敏感环境同样慎用。除非你明确需要"边装依赖边改宿主机代码"的场景，否则不要在 bind 模式开启它。
 >
 > 其他限制：
 > - **Docker 不可用即报错，不降级** subprocess（降级等于在宿主机弱隔离裸跑，更危险）。显式配置 `backend: subprocess` + `host_dir` 视为自担风险的 opt-in。

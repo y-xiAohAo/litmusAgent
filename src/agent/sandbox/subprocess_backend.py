@@ -91,11 +91,23 @@ class SubprocessSandboxBackend:
         """接口对齐 no-op：无预热池，恒返回 True。"""
         return True
 
-    async def execute_code(self, code: str, timeout: int | None = None) -> ExecutionResult:
+    async def execute_code(
+        self,
+        code: str,
+        timeout: int | None = None,
+        *,
+        allow_network: bool = False,
+    ) -> ExecutionResult:
         """在子进程中执行 Python 代码并捕获结果。
 
         执行方式：把代码写入 workspace 内的临时脚本，以 workspace 为 cwd
         调起当前 Python 解释器运行，按 timeout 限时；超时则 kill 进程。
+
+        参数：
+            code: 要执行的 Python 源代码。
+            timeout: 执行超时时间（秒），None 表示使用 backend 默认值。
+            allow_network: TD-010——接受但忽略。subprocess 后端本就不做
+                网络隔离（见模块 docstring Non-Goals），参数仅为接口对齐。
 
         返回：
             ExecutionResult。成功时 exit_code == 0；运行失败时保留真实
