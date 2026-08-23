@@ -105,10 +105,10 @@ class TestHumanApprovalConfig:
     """HumanApprovalConfig 配置与 Agent 装配。"""
 
     def test_config_defaults(self) -> None:
-        """默认关闭，默认工具集为 file_write / file_edit。"""
+        """默认未显式配置（None，普通模式按不启用），默认工具集 file_write/file_edit。"""
         config = AgentConfig()
         approval = config.agent.human_approval
-        assert approval.enabled is False
+        assert approval.enabled is None  # TD-015 单元 C 三态：None = 未显式配置
         assert approval.tools == ["file_write", "file_edit"]
 
     def test_agent_wires_approval_from_config(self) -> None:

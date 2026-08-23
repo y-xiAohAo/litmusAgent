@@ -209,5 +209,7 @@ def run_chat_loop(agent: Agent, plain: bool = False) -> int:
             render_result(result, plain=plain)
     finally:
         loop.close()
+        # TD-015：交互模式退出时收口沙箱 backend，避免孤儿卷泄漏。
+        agent.close()
 
     return 0

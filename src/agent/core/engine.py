@@ -355,9 +355,17 @@ class Agent:
         self.persist_error_patterns = persist_error_patterns
 
         # 未传入时按 config.sandbox.backend 经工厂创建默认后端（TD-003）；
-        # 后端构造失败会优雅降级，不会阻塞 Agent 创建。
-        self._sandbox_backend = sandbox_backend or create_sandbox_backend(
-            config.sandbox if config is not None else None
+        # 工厂对非法组合（如 subprocess + volume_name）直接 raise，
+        # 由调用方（CLI/web）捕获并友好报错，不做静默降级。
+        # 注意：必须显式判 None——自定义 backend 可能把 __bool__ 定义为 False，
+        # 用 `or` 会把它误替换为自建 backend（falsy 陷阱）。
+        # TD-015：记录 backend 是否外部注入——close() 只关闭自建 backend，
+        # 外部注入的由调用方自行管理生命周期。
+        self._owns_sandbox_backend = sandbox_backend is None
+        self._sandbox_backend = (
+            sandbox_backend
+            if sandbox_backend is not None
+            else create_sandbox_backend(config.sandbox if config is not None else None)
         )
 
         # Phase 4.6：支持通过配置决定加载哪些工具。
@@ -519,11 +527,31 @@ class Agent:
 
         清理 ContextCache（如果配置开启 cleanup_on_exit）；
         长期记忆按 cleanup_on_exit + max_age_days 配置做时间清理（TD-013）。
+
+        TD-015：若沙箱 backend 由工厂自建（非外部注入），则关闭它——
+        Docker 后端会据此删除一次性 workspace 卷，修复孤儿卷泄漏；
+        配置了 volume_name 的持久卷则按后端配置保留。
+        backend.close() 本身幂等且异常静默。
+
+        三段清理（context_cache / memory / sandbox backend）各自 try/except
+        隔离：前一段抛异常只记 warning，不中断后续段，保证自建沙箱 backend
+        一定被关闭。
         """
         if self.context_cache is not None and self._cleanup_cache_on_exit:
-            self.context_cache.cleanup()
+            try:
+                self.context_cache.cleanup()
+            except Exception as exc:  # noqa: BLE001 —— 清理失败不阻塞后续段
+                logger.warning("ContextCache 清理失败：%s", exc)
         if self.memory_manager is not None and self._cleanup_memory_on_exit:
-            self.memory_manager.cleanup()
+            try:
+                self.memory_manager.cleanup()
+            except Exception as exc:  # noqa: BLE001 —— 清理失败不阻塞后续段
+                logger.warning("长期记忆清理失败：%s", exc)
+        if self._owns_sandbox_backend and self._sandbox_backend is not None:
+            try:
+                self._sandbox_backend.close()
+            except Exception as exc:  # noqa: BLE001 —— 关闭异常静默，只记日志
+                logger.warning("沙箱 backend 关闭失败：%s", exc)
 
     def reset(self) -> None:
         """重置 Agent 的运行状态。

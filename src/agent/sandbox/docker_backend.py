@@ -18,6 +18,7 @@ import asyncio
 import base64
 import io
 import logging
+import os
 import posixpath
 import tarfile
 import uuid
@@ -32,6 +33,20 @@ from agent.sandbox.base import ExecutionResult
 logger = logging.getLogger(__name__)
 
 __all__ = ["DockerSandboxBackend", "ExecutionResult"]
+
+
+def _host_bind_user() -> str | None:
+    """bind 模式容器运行用户（TD-015 单元 C 双模用户模型）。
+
+    POSIX：返回宿主 ``uid:gid``，保证容器写出的文件属主与宿主用户一致；
+    其他平台（Windows Docker Desktop 经文件共享层自动映射属主）：
+    返回 None，调用方维持默认 nobody。
+    """
+    getuid = getattr(os, "getuid", None)
+    getgid = getattr(os, "getgid", None)
+    if os.name == "posix" and getuid is not None and getgid is not None:
+        return f"{getuid()}:{getgid()}"
+    return None
 
 
 class DockerSandboxBackend:
@@ -57,6 +72,7 @@ class DockerSandboxBackend:
         workspace_volume: str | None = None,
         cleanup_workspace: bool = True,
         image_registry: str | None = None,
+        workspace_bind: str | None = None,
     ) -> None:
         """初始化 Docker 后端。
 
@@ -68,6 +84,10 @@ class DockerSandboxBackend:
             cleanup_workspace: 后端关闭时是否删除 workspace 卷，默认 True。
             image_registry: 镜像源地址（TD-007，如 docker.m.daocloud.io）；
                 None 表示从 Docker Hub 拉取。
+            workspace_bind: TD-015 单元 C——宿主机目录 bind 挂载到 /workspace
+                （替代命名卷）。POSIX 下容器以宿主 uid:gid 运行并跳过
+                chown 65534；Windows 维持 nobody（Docker Desktop 文件共享
+                层自动映射属主）。宿主机目录不属于后端资产，close 不清理。
         """
         self.image: str = image
         self.timeout: int = timeout
@@ -76,6 +96,7 @@ class DockerSandboxBackend:
             workspace_volume or f"hermes-workspace-{uuid.uuid4().hex[:8]}"
         )
         self.cleanup_workspace: bool = cleanup_workspace
+        self.workspace_bind: str | None = workspace_bind
         try:
             self._client: DockerClient | None = docker.from_env()
         except Exception:
@@ -167,6 +188,18 @@ class DockerSandboxBackend:
         if client is None:
             return None
         try:
+            # TD-015 单元 C：bind 模式以宿主路径替代命名卷挂载 /workspace。
+            volumes: dict[str, dict[str, str]] = (
+                {self.workspace_bind: {"bind": "/workspace", "mode": "rw"}}
+                if self.workspace_bind is not None
+                else {self.workspace_volume: {"bind": "/workspace", "mode": "rw"}}
+            )
+            # bind 模式用户模型双模：POSIX 传宿主 uid:gid（保证写出的文件
+            # 属主正确）；Windows Docker Desktop 经文件共享层自动映射属主，
+            # 维持 nobody。仅在调用方未显式指定 user 时生效。
+            effective_user = user
+            if self.workspace_bind is not None and user == "nobody":
+                effective_user = _host_bind_user() or user
             create_kwargs: dict[str, Any] = {
                 "image": self.image,
                 "command": command,
@@ -174,12 +207,14 @@ class DockerSandboxBackend:
                 "stdin_open": True,
                 "tty": False,
                 "network_mode": network_mode,
-                "user": user,
+                "user": effective_user,
                 "read_only": read_only,
-                "volumes": {
-                    self.workspace_volume: {"bind": "/workspace", "mode": "rw"},
-                },
+                "volumes": volumes,
             }
+            if self.workspace_bind is not None:
+                # bind 模式：宿主 uid 在容器内无 passwd 条目，HOME 指向只读层
+                # 会导致工具写家目录失败；指向可写 tmpfs 的 /tmp。
+                create_kwargs["environment"] = {"HOME": "/tmp"}
             if memory_limit is not None:
                 create_kwargs["mem_limit"] = memory_limit
             if tmpfs is not None:
@@ -199,20 +234,22 @@ class DockerSandboxBackend:
             # 创建后以 root 将 volume 属主改为 nobody（uid/gid 65534，Debian 系
             # 镜像标准 nobody），保证工具写入与沙箱代码写入权限一致。
             # 数字 uid 不依赖用户存在；失败仅警告降级，不阻塞容器创建。
-            try:
-                exit_code, output = await asyncio.to_thread(
-                    container.exec_run,
-                    "chown -R 65534:65534 /workspace",
-                    user="root",
-                )
-                if exit_code != 0:
-                    logger.warning(
-                        "workspace chown 失败（exit=%s）：%s",
-                        exit_code,
-                        output,
+            # TD-015 单元 C：bind 模式跳过 chown——不篡改宿主文件属主。
+            if self.workspace_bind is None:
+                try:
+                    exit_code, output = await asyncio.to_thread(
+                        container.exec_run,
+                        "chown -R 65534:65534 /workspace",
+                        user="root",
                     )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("workspace chown 执行异常：%s", exc)
+                    if exit_code != 0:
+                        logger.warning(
+                            "workspace chown 失败（exit=%s）：%s",
+                            exit_code,
+                            output,
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("workspace chown 执行异常：%s", exc)
             return container
         except Exception:
             return None
@@ -552,8 +589,12 @@ class DockerSandboxBackend:
             except Exception:
                 pass
 
-        # 根据配置删除 workspace volume。
-        if self.cleanup_workspace and self._client is not None:
+        # 根据配置删除 workspace volume（bind 模式无卷可删，跳过）。
+        if (
+            self.cleanup_workspace
+            and self.workspace_bind is None
+            and self._client is not None
+        ):
             try:
                 volume = self._client.volumes.get(self.workspace_volume)
                 volume.remove()

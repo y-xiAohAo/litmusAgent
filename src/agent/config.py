@@ -21,11 +21,12 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from agent.core.security import PolicyEngine
 
@@ -117,11 +118,14 @@ class MemoryConfig(BaseModel):
 class HumanApprovalConfig(BaseModel):
     """写操作人工确认配置（TD-008）。
 
-    默认关闭，开启后由前端（如 CLI）注入 approval_callback；
+    enabled 为三态：
+      - None（默认）：未显式配置；host_dir（bind）模式下装配层按 True
+        生效（默认保护宿主工作区），其余模式按不启用处理。
+      - True / False：用户显式配置，优先于一切默认推导。
     仅 callback 存在时确认流程才真正生效。
     """
 
-    enabled: bool = False
+    enabled: bool | None = None   # None = 未显式配置；host_dir 模式下装配层按 True 生效
     tools: list[str] = Field(default_factory=lambda: ["file_write", "file_edit"])
 
 
@@ -178,6 +182,9 @@ class SecurityConfig(BaseModel):
     # 为后续文件/记忆策略预留的扩展字段
     file_read_deny_patterns: list[str] = Field(default_factory=list)
     memory_read_only_categories: list[str] = Field(default_factory=list)
+    # TD-015 单元 C：host_dir bind 模式时由装配层置 True，在默认规则集上
+    # 追加敏感文件 read deny（优先级 90）。自定义规则集完全接管，不注入。
+    bind_read_deny: bool = False
 
     def build_policy_engine(self) -> PolicyEngine | None:
         """根据配置构建 PolicyEngine；未启用时返回 None。"""
@@ -186,11 +193,44 @@ class SecurityConfig(BaseModel):
         if not self.rules:
             engine = PolicyEngine.default(default_action=self.default_action)
             self._apply_workspace_override(engine)
+            if self.bind_read_deny:
+                self._apply_bind_read_deny(engine)
             return engine
         return PolicyEngine.from_config(
             rules=list(self.rules),
             default_action=self.default_action,
         )
+
+    # TD-015 保险三：bind 模式追加的敏感文件 read deny（subject 已归一化
+    # 为小写 POSIX 风格路径，pattern 使用正则小写）。
+    _BIND_READ_DENY: ClassVar[tuple[tuple[str, str], ...]] = (
+        (r"(^|/)\.env", "禁止读取 .env 等环境密钥文件（bind 工作区保护）"),
+        (r"(^|/)\.ssh/", "禁止读取 .ssh 目录（bind 工作区保护）"),
+        (r"\.(pem|key)$", "禁止读取 pem/key 密钥文件（bind 工作区保护）"),
+        (r"(^|/)id_rsa", "禁止读取 id_rsa 私钥（bind 工作区保护）"),
+        (r"(^|/)\.git/", "禁止读取 .git 内部对象（bind 工作区保护）"),
+    )
+
+    def _apply_bind_read_deny(self, engine: PolicyEngine) -> None:
+        """在默认规则集上追加 bind 模式敏感文件 read deny（优先级 90）。
+
+        对应 spec 模式：`**/.env*`、`**/.ssh/**`、`**/*.{pem,key}`、
+        `**/id_rsa*`、`**/.git/**`。read 不加 catch-all（项目文件需可读）。
+        """
+        from agent.core.security import PolicyAction, PolicyRule
+
+        for pattern, reason in self._BIND_READ_DENY:
+            engine.add_rule(
+                PolicyRule(
+                    resource="file/path",
+                    operation="read",
+                    pattern=pattern,
+                    action=PolicyAction.DENY,
+                    reason=reason,
+                    priority=90,
+                    use_regex=True,
+                )
+            )
 
     def _apply_workspace_override(self, engine: PolicyEngine) -> None:
         """当 workspace_path 非默认值时，在默认规则集上追加边界覆盖规则。
@@ -243,6 +283,19 @@ class SandboxConfig(BaseModel):
 
     memory_limit_mb：内存限制（MB）
       通过 Docker 的 cgroup 实现，防止 LLM 的代码耗尽宿主机内存。
+
+    volume_name（TD-015 单元 B）：持久工作区卷名
+      配置后实际使用 Docker 卷 `litmus-ws-<volume_name>`，跨会话保留
+      工作区文件；为 None（默认）时使用随机卷并在关闭时清理。
+
+    host_dir（TD-015 单元 C）：宿主机目录 bind 挂载
+      配置后沙箱直接操作宿主机真实项目目录（/workspace → host_dir）。
+      强制 git 快照保险（非 git 目录拒绝启动）、写确认与敏感文件
+      read deny 默认生效；docker 后端 Docker 不可用时明确报错不降级。
+
+    本类同时承载 host_dir 模式的安全件装配推导（is_bind_mode /
+    effective_human_approval_enabled / effective_security_enabled），
+    供 CLI / Web 装配层统一调用。
     """
 
     backend: str = "docker"            # 沙箱后端：docker / subprocess
@@ -250,6 +303,46 @@ class SandboxConfig(BaseModel):
     image_registry: str | None = None  # 镜像源地址（TD-007），None = Docker Hub
     timeout: int = 30                  # 执行超时（秒）
     memory_limit_mb: int = 256         # 内存上限（MB）
+    volume_name: str | None = None     # 持久卷名 → 实际卷 litmus-ws-<volume_name>
+    host_dir: str | None = None        # 宿主目录 bind 挂载（单元 C）
+
+    @model_validator(mode="after")
+    def _validate_workspace_fields(self) -> SandboxConfig:
+        """校验工作区字段：卷名合法、双字段互斥。"""
+        if self.volume_name is not None:
+            if not re.fullmatch(r"[a-zA-Z0-9_.-]+", self.volume_name):
+                raise ValueError(
+                    f"volume_name 含非法字符：{self.volume_name!r}"
+                    "（只允许字母、数字、_、.、-）"
+                )
+        if self.host_dir is not None and self.volume_name is not None:
+            raise ValueError("host_dir 与 volume_name 互斥，只能配置其一")
+        return self
+
+    def is_bind_mode(self) -> bool:
+        """是否处于 host_dir（bind）工作区模式。"""
+        return self.host_dir is not None
+
+    def resolve_human_approval(self, approval: HumanApprovalConfig) -> bool:
+        """推导人工确认生效值（TD-015 保险二）。
+
+        bind 模式且用户未显式配置时按 True 生效（默认保护）；
+        其余情况尊重显式配置，未配置视为不启用。
+        """
+        if approval.enabled is not None:
+            return approval.enabled
+        return self.is_bind_mode()
+
+    def resolve_security_enabled(self, security: SecurityConfig) -> bool:
+        """推导安全策略生效值（TD-015 保险三）。
+
+        bind 模式且用户未显式配置时按 True 生效；其余情况尊重显式配置。
+        显式与否用 model_fields_set 判断（enabled 字段保持 bool 默认 False，
+        不引入三态，兼容既有测试与行为）。
+        """
+        if "enabled" in security.model_fields_set:
+            return security.enabled
+        return self.is_bind_mode()
 
 
 class ToolsConfig(BaseModel):

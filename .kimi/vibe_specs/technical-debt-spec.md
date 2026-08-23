@@ -3,7 +3,7 @@
 > **SDD-RIPER-ONE 产物**：本文件是 Hermes Agent 当前技术债的“唯一真相源”。  
 > **原则**：`No Spec, No Code`。本清单中的任何一项进入 `Execute` 阶段前，必须先被选中并产出/细化对应 Spec，再经过 `Plan Approved` 门禁。  
 > **维护规则**：每完成一项技术债修复，必须同步更新本文件状态、相关测试数与文档（`docs/progress-spec.md`、`docs/session-context.md`、`docs/evaluation-log.md`、`CODEMAP.md`）。  
-> **最后更新**：2026-07-21
+> **最后更新**：2026-08-22
 
 ---
 
@@ -24,6 +24,8 @@
 | TD-011 | 默认门禁套件环境不确定性（`OPENAI_*` 污染 + web 测试隐性真实调用） | — | 🟠 中 | ✅ 已完成（2026-07-19，`tests/conftest.py` 全局清理） | ❌ 否 | 0.5 天 |
 | TD-012 | `requirements.txt` 与 `pyproject.toml` 依赖漂移（缺 fastapi/uvicorn/jinja2） | — | 🟡 低 | ✅ 已完成（2026-07-19） | ❌ 否 | 0.1 天 |
 | TD-013 | 纯对话事实不入记忆（`llm_extraction_enabled` 有开关无实现） | — | 🟡 低-中 | ✅ 已完成（2026-07-21，LLM 提取器 + 去重 + 定时清理接通） | ❌ 否 | 1-2 天 |
+| TD-014 | 代码搜索工具缺失（无 grep/glob 类一等工具） | — | 🟡 低-中 | ✅ 已完成（2026-08-22，grep/glob 双模块 + 策略卡口 + externalizer 预览分支） | ❌ 否 | 1-2 天 |
+| TD-015 | 工作区无法跨会话持久 / 不能维护宿主项目（Coding Agent 形态缺口） | — | 🔴 高 | ✅ 已完成（2026-08-22：单元 B+C 落地，真实 Docker 验证 10/10 通过，Spec：`mydocs/specs/2026-08-22_td-015-persistent-workspace.md`） | ✅ 是 | 3-5 天 |
 
 ---
 
@@ -518,6 +520,169 @@ Batch 5（记忆专项批量评测）试点实证：默认 `RuleMemoryExtractor`
 - **方案**：新增 `src/agent/core/memory_llm_extractor.py`（LLM 驱动，PREFERENCES 事实 + TASK_SUMMARIES 摘要；预过滤成本护栏；失败静默降级）；`runtime.py` 开关接线；双层去重（LLM 增量 prompt + 保存时规范化去重）；`max_age_days` + `cleanup_on_exit` 定时清理接通（复用既有 store.cleanup 与数量淘汰）。
 - **验收证据**：`tests/test_memory_llm_extractor.py` 11 个单测 + 集成测试（对话事实跨会话召回）通过；Batch 5 对话版 T101/T102（无文件载体教学）mem 臂 4/4 PASS、no-mem 臂 0/4（对照成立）；全量 745 passed / mypy 47 文件 / ruff 全绿。
 - **Feature Spec**：`mydocs/specs/2026-07-21_00-35_td-013-llm-memory-extractor.md`
+
+---
+
+### TD-014：代码搜索工具缺失（无 grep/glob 类一等工具）
+
+#### 背景
+
+默认工具集（`_build_tool_specs`，`src/agent/tools/__init__.py:50-165`）只有执行/读/列/写/局部编辑/交付 6 个工具，**没有内容级代码搜索能力**：在仓库里定位符号或文本，LLM 只能在 `sandbox_exec` 里写 grep 命令绕行——不是一等工具，无路径策略检查语义，也无输出截断约定。
+
+评测证据（工具偏好问题的结构诱因之一）：
+
+- S2 联调（`docs/evaluation-log.md:47`）：CSV 工作流任务中 LLM 用 `sandbox_exec` 一把梭，跳过 `file_write`/`file_read`，重跑行为稳定。
+- S4 联调（`docs/evaluation-log.md:49`）：稳定跳过 `file_edit`，改用 `sandbox_exec` 改文件。
+- Batch 3 为此引入工具路径断言（`expected_tools` 比对 Trace 实际调用序列，`docs/evaluation-log.md:68`）——产物对但没用指定工具 = FAIL。
+
+口径说明：S2/S4 直接证明的是"模型工具偏好"，搜索工具缺失是其合理结构诱因之一（文件/代码操作面窄），非已证因果。
+
+#### 目标
+
+提供 `grep`（内容搜索）与 `glob`（文件名匹配）两个一等工具，让代码定位不再依赖 `sandbox_exec` 绕行；两工具全程走统一卡口（策略检查 / 人工确认 / ExecutionContext 注入 / Trace），不破坏"工具面最小"的注册中心设计。
+
+#### 范围
+
+**Must Have**
+
+1. 新增 `src/agent/tools/code_search.py`，实现两个 handler：
+   - `grep(pattern, path, include?)`：正则内容搜索，输出 `路径:行号:匹配行`，带结果条数与字节截断上限；
+   - `glob(pattern, path?)`：文件名匹配（fnmatch 语义），输出相对路径列表，带截断。
+2. 实现复用沙箱后端：通过 `SandboxBackend.execute_code` 执行一段只读搜索脚本（`os.walk` + `re`/`fnmatch`），**不改动 `SandboxBackend` Protocol**——Docker/Subprocess 双后端自动兼容。
+3. 两工具注册进 `_build_tool_specs`（默认层），受 `tools.enabled` 白名单控制。
+4. 路径参数接入 `ToolRegistry._PARAMETRIC_CHECKS`（`src/agent/core/engine.py:77-83`）：映射 `("file/path", "read", "path")`，复用现有参数级策略检查与路径归一化。
+5. 测试覆盖：命中 / 无命中 / 多结果截断 / 策略拒绝 / 非法正则（可参数化双后端，参照既有 `file_*` 测试惯例）。
+
+**Non-Goals**
+
+- 不做语义/embedding 代码检索，不引入向量数据库或索引持久化（对齐 TD-009 先例）。
+- 不修改 LLM 工具选择引导（system prompt 调优如需，另立项）。
+- 不为搜索工具新增网络或宿主文件系统能力（只在沙箱 workspace 语义内）。
+- 不追求 ripgrep 级性能（沙箱任务规模内 Python 实现足够）。
+
+#### 候选方案
+
+| 方案 | 优点 | 缺点 | 推荐度 |
+|---|---|---|---|
+| A. `execute_code` 跑只读搜索脚本 | 零协议改动；双后端自动兼容；复用现有超时与安全门禁 | 输出格式与截断需自行约定 | ⭐⭐⭐⭐ |
+| B. `SandboxBackend` Protocol 增加 `grep`/`glob` 方法 | 语义显式、类型可查 | 破抽象：两后端都需实现，协议膨胀 | ⭐⭐ |
+
+**建议采用方案 A**。
+
+#### 涉及文件
+
+- 新增：`src/agent/tools/code_search.py`
+- 修改：`src/agent/tools/__init__.py`（`_build_tool_specs` 注册两条 ToolSpec）
+- 修改：`src/agent/core/engine.py`（`_PARAMETRIC_CHECKS` 增加两条映射）
+- 新增：`tests/test_code_search.py`（或并入 `tests/test_tools.py`）
+- 修改：`docs/configuration.md`（`tools.enabled` 说明补两个工具名）
+
+#### 验收标准
+
+- `grep`/`glob` 在 Docker 与 Subprocess 双后端下命中/无命中行为一致。
+- 策略启用时 `grep(path="/etc")` 被 `file/path` read 规则拒绝，拒绝原因回传 LLM。
+- 结果超上限时截断并注明截断。
+- `pytest tests/ -q` 不新增失败；`mypy src/` / `ruff check src/ tests/` 全绿。
+- （可选，评测验证）以 b3 风格工具路径断言复测 S4 类任务，观察 `file_edit`/`file_read` 使用率变化。
+
+#### 风险
+
+- 搜索输出可能很大 → 截断上限兜底；压缩启用时大输出天然走 `ToolResultExternalizer` 外迁。
+- LLM 可能仍偏好 `sandbox_exec` → 用可选评测项观察使用率，不靠 prompt 硬扭。
+
+#### 备注
+
+- 定位：工具面最小哲学下的按需扩展——进默认层 `_build_tool_specs` 即自动获得策略检查/人工确认/ExecutionContext 注入/Trace 记录。
+- 进入 Execute 前，按 SDD-RIPER-ONE 流程在 `mydocs/specs/` 产出独立 Feature Spec（参照 TD-013 路径：`mydocs/specs/2026-07-21_00-35_td-013-llm-memory-extractor.md`）。
+
+#### 修复记录
+
+- **日期**：2026-08-22
+- **方案**：方案 A（`execute_code` 跑只读搜索脚本，零协议改动）；拆分为 `tools/grep.py` + `tools/glob.py` 双模块（贴合"模块名=工具名=函数名"约定）；通用化参数（grep: `include`/`ignore_case`/`max_results`；glob: stdlib recursive 支持 `**`）；`_PARAMETRIC_CHECKS` 追加两条 read 映射；externalizer 预览分支扩展为 `file_read`/`grep`/`glob` 均 500 字符。
+- **影响面决策**：现有测试零破坏（无工具数量断言）；评测口径接受漂移（所有评测臂默认获得新工具，新旧批次 token/成功率不可直接对比，待重新基线）——已记入 `docs/evaluation-log.md`。
+- **验收证据**：`tests/test_grep_glob.py` 21 用例全过（含策略拒绝/schema/截断/双后端语义）；全量 807 passed, 1 skipped；mypy 50 文件零错误；ruff 全绿；真实 SubprocessSandboxBackend 端到端抽查通过。
+- **Feature Spec**：`mydocs/specs/2026-08-22_td-014-code-search-tools.md`
+
+---
+
+### TD-015：工作区无法跨会话持久 / 不能维护宿主项目（Coding Agent 形态缺口）
+
+#### 背景
+
+沙箱工作区是"会话级一次性"的：TD-001 后同一 backend 实例内有命名 volume 挂 `/workspace`，会话内写→读→改→运行闭环成立；但默认 volume 名随机（`hermes-workspace-<8hex>`，`docker_backend.py:75-77`）、`cleanup_workspace` 默认 True、且配置层完全不透传这两个参数（`SandboxConfig` 无 workspace 字段，`config.py:234-252`；工厂 `create_sandbox_backend` 不透传，`sandbox/__init__.py:33-56`）。结果：每次会话从空白开始，无法维护一个项目、做增量更新；宿主机上看不到工作区文件，IDE/git/CI 不可达。
+
+**核查中发现的现有 bug（附带登记）**：CLI `agent run`/`chat` 从不调用 `sandbox_backend.close()`（`Agent.close()` 只清缓存与记忆，`engine.py:517-526`；cli/ 下无 close 命中），导致孤儿 volume `hermes-workspace-<8hex>` 持续泄漏——现状既不是"清理干净"也不是"可复用"，是最差形态。
+
+#### 目标
+
+让 Agent 能够跨会话持久维护一个工作区，最终形态可选地直接维护宿主机上的真实项目目录（增量编辑、宿主侧 IDE/git/CI 原生可用），同时安全边界不被削弱。
+
+#### 候选方案
+
+| 方案 | 做法 | 优点 | 代价/风险 | 推荐度 |
+|---|---|---|---|---|
+| A. 产物回传 | 现状能力（`get_file` 读回，调用方落盘） | 零改动 | 只能交付快照，多文件回传笨拙，不构成"维护" | ⭐⭐（现状） |
+| B. 固定 volume + 持久化 | config 增加 `workspace_volume`/`cleanup_workspace` 字段并透传；按项目名固定卷名 | 改动最小（~1 天）；隔离性完全不变；跨会话增量成立 | 宿主仍看不到文件；孤儿卷需管理；只是"沙箱里的项目" | ⭐⭐⭐⭐（第一单元） |
+| C. bind mount 宿主项目目录 | 容器挂载 `宿主项目路径 → /workspace` | 真正维护宿主项目，IDE/git/CI 原生可用 | 安全模型剧变（LLM 直写宿主真实文件）；需重做写边界、宿主权限（容器 nobody uid 65534 vs 宿主属主）、Windows 路径转换 | ⭐⭐⭐⭐（最终形态，第二单元） |
+| D. git 桥 | 沙箱内工作，patch/commit 交付，宿主 review 合入 | 隔离保留 + review 门禁天然 | 链路长，依赖网络（碰 TD-010） | ⭐⭐⭐（后续可选） |
+
+**建议路线：B → C 分两单元推进**（B 先恢复"不断片"的基本能力，C 作为真 Coding Agent 形态单独过安全设计评审）。
+
+#### 阻力分析
+
+1. **配置与工厂断层**（小阻力）：后端参数已支持固定卷名与保留，但 `SandboxConfig`/`create_sandbox_backend` 均不透传——补齐是纯管道工作。
+2. **CLI 生命周期缺口**（中阻力）：`Agent.close()` 不碰沙箱后端、CLI 不调 `close()`——volume 清理/保留语义无处挂接；bind mount 后"会话结束做什么"更需要显式生命周期。需顺手修孤儿卷泄漏。
+3. **安全边界重写**（最大阻力，方案 C）：现状写边界 = `default_security_rules.yaml` 三件套（deny `..` @95 / allow `^/workspace` @50 / deny catch-all @1），语义绑死容器内 `/workspace`；且 `security.enabled` **默认 False**、`file_write`/`file_edit` 工具层零路径校验（`file_write.py:32-33` 原样透传）。挂宿主目录后，边界语义要从"容器内固定路径"变成"挂载点内 + 敏感子路径 deny（.git? .env?）"，并强烈建议写操作人工确认（TD-008 机制已就绪）默认开启。
+4. **权限错配**（方案 C 特有）：容器以 nobody(65534) 写入，bind mount 下宿主侧文件属主会变成 65534（Linux 宿主）或经 Docker Desktop 文件共享层映射（Windows/macOS 行为不同）——跨平台行为需实测。
+5. **Windows 路径**：`docker_backend.py` 无任何平台分支（docker-py 隐式处理 npipe）；bind mount 需要 Windows 路径→Docker 路径转换（`D:\proj` → `/d/proj` 或 Docker Desktop 语义），无现成先例，TD-001 时就标记过该风险。
+6. **read 无边界**：现状 read 只 deny 敏感路径、无 catch-all；挂宿主项目后 `file_read`/`grep` 可读挂载点内一切（含 `.env`、密钥）——read 边界规则需同步设计。
+
+#### 影响范围（预估）
+
+- **配置**：`SandboxConfig` 新增 workspace 相关字段（volume 名/cleanup/bind mount 路径）；`SecurityConfig.workspace_path` 语义扩展。
+- **沙箱层**：`docker_backend.py`（bind mount 支持、生命周期）、`subprocess_backend.py`（`workspace_root` 参数已存在，语义天然对齐 C）、`create_sandbox_backend` 工厂透传。
+- **引擎/CLI**：`Agent.close()` 与 CLI 入口的沙箱生命周期收口（修孤儿卷）。
+- **安全**：写边界规则集重做 + read 边界评估 + 人工确认默认策略（方案 C）。
+- **工具层**：`file_write`/`file_edit` 是否加兜底路径校验（ defense-in-depth）。
+- **测试/文档/评测**：双后端契约测试扩展、configuration.md/usage.md、批量评测口径（挂载点任务场景）。
+
+#### 风险
+
+- **高危**：方案 C 下 LLM 直写宿主真实文件——误删/误改不可逆；必须配 read/write 边界 + 人工确认 + 文档醒目标注。
+- **中危**：孤儿 volume 泄漏（现状 bug，方案 B 顺带修复）；权限属主错配导致宿主侧文件难清理。
+- **低危**：新旧评测口径变化（同 TD-014 先例，接受漂移）。
+
+#### 进入 Execute 前的路径
+
+先按 SDD-RIPER-ONE 为**单元 B**（固定 volume + 配置透传 + 孤儿卷修复）产 Feature Spec；单元 C 待 B 落地后单独立项评审安全设计。
+
+#### 行业权限模型调研（2026-08-22，方案 C 安全设计依据）
+
+**结论：纯权限规则层不够，行业共识是四层防御纵深组合**：
+
+| 层 | 防什么 | 行业先例 | Litmus 现状映射 |
+|---|---|---|---|
+| OS 级沙箱 | 任意子进程越界、prompt injection 绕过规则 | Codex：Seatbelt(macOS)/Landlock+seccomp(Linux)；官方建议容器场景由 Docker 承担隔离、容器内可跑 full-access | ✅ 容器即沙箱层（network=none/non-root/read-only 已有）；bind mount 后挂载点即边界 |
+| 权限规则/审批策略 | 日常误操作、危险命令、敏感文件 | Claude Code：deny→ask→allow 求值、`Tool(specifier)` 语法、复合命令逐段匹配；Codex：sandbox×approval 双轴正交 | ✅ PolicyEngine 规则（优先级首命中）≈ Claude Code 规则层；TD-008 人工确认钩子 = approval 层；缺"双轴"中的 approval policy 分级概念 |
+| 目录边界 | 读写范围收敛 | 全员：cwd/workspace 为默认边界，扩展需显式 add-dir；Copilot 最严（linked resource 都拒） | ⚠️ 现状 write 有 `/workspace` 边界、read 无边界；bind mount 后边界语义=挂载点 |
+| git 安全网 | "批准了但结果糟糕"的剩余风险 | Aider：自动 commit + dirty 快照 + /undo + `(aider)` 署名 | ❌ 完全缺失，方案 C 必配 |
+
+**关键认知**（Claude Code 官方自认）：权限规则只对内置工具调用生效，**管不住任意子进程**（`sandbox_exec` 里 Python 自己 open 文件）——bind mount 场景下真正的边界是**挂载点 + 容器 uid**，不是规则文本。
+
+**uid 映射（bind mount 属主问题的行业解法）**：
+
+- 主流做法：`--user $(id -u):$(id -g)` 以宿主用户身份运行——写出文件属主正确，且 agent 对宿主文件的能力 ≤ 用户本人（最小权限）
+- `userns-remap`（daemon 级）隔离更强但 bind mount 属主会被 remap 打乱，运维坑多（buildkite/onedev 有案可查），不建议首版采用
+- 现状冲突：Litmus 容器固定 `user="nobody"`(65534) + chown 65534（EVAL-010），bind mount 模式需改为宿主 uid 运行——两种模式的用户模型需分离设计
+
+**方案 C 安全设计要点（已落入本节作为设计约束）**：
+
+1. 容器加固维持并收紧：`--cap-drop ALL`、不挂 docker.sock、网络默认关（碰 TD-010 时白名单化）
+2. bind mount 只挂项目目录（配置显式指定），绝不允许挂 `$HOME`/根目录；`.env`/`.ssh`/`.git` 敏感子路径规则层 deny + 文档警示
+3. 用户模型双模：volume 模式维持 nobody+chown；bind mount 模式 `--user` 宿主 uid（Windows Docker Desktop 行为需实测，可能天然映射）
+4. 审批策略升级为双轴：sandbox 配置 × approval policy（参照 Codex `untrusted/on-request/on-failure/never`），bind mount 模式默认不低于 on-request
+5. git 安全网：bind mount 目标是 git 仓库时，默认 agent 改动前快照 commit / 独立分支工作，提供回滚路径（Aider 模式）
+6. 文档化危险面：提供管理员级开关禁用"全自动 + bind mount"组合（参照 Claude Code `disableBypassPermissionsMode`）
 
 ---
 

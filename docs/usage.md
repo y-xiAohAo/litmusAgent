@@ -247,6 +247,56 @@ if __name__ == "__main__":
 
 ---
 
+## 维护本地项目（bind 工作区模式，TD-015）
+
+默认模式下 Agent 的沙箱工作区是 Docker 卷，宿主机上看不到产物。若想让 Agent
+**直接维护宿主机上的真实项目目录**（读写你的代码仓库），配置 `sandbox.host_dir`：
+
+```yaml
+# config.yaml
+sandbox:
+  backend: docker        # 推荐；显式 subprocess 为自担风险的弱隔离 opt-in
+  host_dir: D:/myproject # 宿主机真实项目目录，容器内挂载为 /workspace
+```
+
+```bash
+agent run "修复 src/ 下的类型错误并补测试" --config config.yaml
+```
+
+> **⚠️ 高风险模式**：Agent 的写操作直接落在宿主机目录，误写误删没有沙箱兜底。
+> 完整风险说明见 [configuration.md](configuration.md) 的 bind 警示框。
+
+四道保险默认生效：
+
+1. **git 强制快照**：`host_dir` 必须是 git 仓库（否则拒绝启动）。启动时若工作区
+   有未提交改动，自动在当前分支提交快照（`litmus: pre-agent snapshot`，署名
+   `litmus-agent`，不改你的 git 配置），并在启动横幅中打印快照 sha。
+2. **写确认默认开启**：`file_write`/`file_edit` 执行前询问 `y/n/a`
+   （`a` 后本会话免确认）；管道等非交互场景默认拒写。
+3. **敏感文件 read deny**：`.env*`、`.ssh/`、`*.pem`/`*.key`、`id_rsa*`、`.git/`
+   默认禁止读取。
+4. **启动横幅**：打印挂载路径、快照 sha、写确认状态与回滚命令。
+
+回滚与审计：
+
+```bash
+git -C D:/myproject status                  # 查看 Agent 改了什么
+git -C D:/myproject diff                    # 看具体差异
+git -C D:/myproject reset --hard <快照sha>  # 回到启动前快照
+```
+
+注意：Docker 不可用时 bind 模式直接报错，不会降级到 subprocess；也不要让两个
+Agent 同时挂载同一个目录。
+
+> **边界口径**：敏感文件 read deny 约束的是**工具层**访问（`file_read`/`grep`/
+> `glob` 等工具调用，含脚本内的兜底过滤）。容器内 `sandbox_exec` 执行的代码
+> **不受该策略约束**（策略引擎只能看到工具参数，无法审计任意代码）——bind
+> 模式的真实安全边界是**挂载点 + git 快照 + 写确认**三件套，read deny 只是
+> 降低 LLM 顺手读取密钥概率的辅助手段，不能替代仓库本身的密钥卫生
+> （不要把真实生产密钥留在工作区）。
+
+---
+
 ## 批量评测（Batch E2E）
 
 项目内置批量评测体系，用于在真实 LLM 上量化 Agent 机制效果（规划/反思对照实验）：

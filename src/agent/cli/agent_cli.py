@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import io
+import logging
 import os
 import sys
 
@@ -18,9 +19,25 @@ import yaml
 from agent import __version__
 from agent.cli.chat import make_cli_approval_callback, run_chat_loop
 from agent.cli.render import render_config, render_error, render_result
+from agent.cli.workspace_guard import apply_bind_safeguards
 from agent.config import AgentConfig, load_config
-from agent.core.engine import Agent
+from agent.core.engine import Agent, ApprovalCallback
 from agent.llm import BaseLLMClient, EchoClient, OpenAIClient
+
+logger = logging.getLogger(__name__)
+
+
+def _make_non_interactive_deny_callback() -> ApprovalCallback:
+    """构造非交互场景的审批回调：一律拒写（TD-015 单元 C）。
+
+    拒绝结果由引擎包装为 ToolResult 回传 LLM，提示其改用其他方案。
+    """
+
+    def callback(tool_name: str, arguments: dict[str, object]) -> bool:
+        """确认入口：非交互环境固定返回 False（拒绝执行）。"""
+        return False
+
+    return callback
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -216,6 +233,69 @@ def _build_llm_client(config: AgentConfig, echo: bool) -> BaseLLMClient:
     )
 
 
+def _prepare_bind_workspace(config: AgentConfig, plain: bool = False) -> None:
+    """TD-015 单元 C：host_dir（bind）模式启动前的安全件装配。
+
+    保险一/二/三（git 快照、审批与安全件默认推导）下沉为
+    `workspace_guard.apply_bind_safeguards`，CLI 与 Web 共用避免漂移；
+    本函数仅在其后追加保险四：打印启动横幅（挂载路径、快照 sha、
+    写确认状态、回滚提示）。
+
+    参数：
+        config: 已合并的最终配置。
+        plain: 是否使用纯文本输出。
+
+    抛出：
+        ValueError: git 校验或快照失败（由调用方走友好报错路径）。
+    """
+    host_dir = config.sandbox.host_dir
+    assert host_dir is not None  # 调用方保证仅 bind 模式进入
+
+    snapshot_sha = apply_bind_safeguards(config)
+    # apply_bind_safeguards 已把三态 None 收敛为最终生效值。
+    approval_on = bool(config.agent.human_approval.enabled)
+    _render_bind_banner(host_dir, snapshot_sha, approval_on, plain=plain)
+
+
+def _render_bind_banner(
+    host_dir: str,
+    snapshot_sha: str | None,
+    approval_on: bool,
+    plain: bool = False,
+) -> None:
+    """打印 bind 模式启动横幅（保险四）。
+
+    非 TTY（无终端/管道）场景下审批回调固定拒写，文案如实标注
+    "非交互：写操作默认拒绝"，不展示 y/n/a 交互提示。
+    """
+    if approval_on:
+        try:
+            interactive = sys.stdin.isatty()
+        except (AttributeError, ValueError):
+            # stdin 缺失或已关闭时按非交互处理（更安全口径）。
+            interactive = False
+        approval_text = "已启用（y/n/a）" if interactive else "已启用（非交互：写操作默认拒绝）"
+    else:
+        approval_text = "已关闭（显式配置，风险自担）"
+    lines = [
+        "[bind 工作区模式] Agent 将直接操作宿主机目录",
+        f"  挂载路径：{host_dir} → 容器内 /workspace",
+        f"  git 快照：{snapshot_sha if snapshot_sha else '工作区干净，无需快照'}",
+        f"  写确认：{approval_text}",
+    ]
+    if snapshot_sha:
+        lines.append(f"  回滚：git -C {host_dir} reset --hard {snapshot_sha}")
+    lines.append(f"  审计：git -C {host_dir} status / git -C {host_dir} diff")
+    message = "\n".join(lines)
+    if plain:
+        print(message)
+        return
+    from rich.console import Console
+    from rich.panel import Panel
+
+    Console().print(Panel(message, title="bind 工作区", border_style="yellow"))
+
+
 def _build_agent(
     config: AgentConfig,
     llm_client: BaseLLMClient,
@@ -237,9 +317,16 @@ def _build_agent(
     """
     approval_callback = None
     if approve or config.agent.human_approval.enabled:
-        approval_callback = make_cli_approval_callback(
-            set(config.agent.human_approval.tools), plain=plain
-        )
+        if not sys.stdin.isatty():
+            # TD-015 单元 C：非交互场景（无 TTY / 管道）无法询问用户，
+            # 审批回调默认拒写；拒绝原因由引擎作为 ToolResult 回传 LLM，
+            # LLM 可改走其他路径（如仅在沙箱内执行）。
+            logger.warning("非交互环境（无 TTY）：写操作审批默认拒绝")
+            approval_callback = _make_non_interactive_deny_callback()
+        else:
+            approval_callback = make_cli_approval_callback(
+                set(config.agent.human_approval.tools), plain=plain
+            )
         config.agent.human_approval.enabled = True
     if plan:
         config.agent.planner.enabled = True
@@ -267,6 +354,13 @@ def cmd_chat(args: argparse.Namespace) -> int:
         render_error(f"配置加载失败：{exc}", plain=args.plain)
         return 1
 
+    if config.sandbox.is_bind_mode():
+        try:
+            _prepare_bind_workspace(config, plain=args.plain)
+        except ValueError as exc:
+            render_error(f"bind 工作区校验失败：{exc}", plain=args.plain)
+            return 1
+
     if not args.echo:
         api_key = _effective_api_key(config)
         if not api_key:
@@ -278,7 +372,15 @@ def cmd_chat(args: argparse.Namespace) -> int:
             return 1
 
     llm_client = _build_llm_client(config, echo=args.echo)
-    agent = _build_agent(config, llm_client, approve=args.approve, plain=args.plain, plan=args.plan)
+    try:
+        agent = _build_agent(
+            config, llm_client, approve=args.approve, plain=args.plain, plan=args.plan
+        )
+    except ValueError as exc:
+        # 沙箱配置非法（如 subprocess + volume_name）时工厂会 raise ValueError，
+        # 走友好输出而不是裸 traceback。
+        render_error(f"沙箱配置错误：{exc}", plain=args.plain)
+        return 1
     return run_chat_loop(agent, plain=args.plain)
 
 
@@ -291,7 +393,18 @@ def cmd_run(args: argparse.Namespace) -> int:
     Returns:
         退出码：0 成功，1 业务错误。
     """
-    config = _load_config(args)
+    try:
+        config = _load_config(args)
+    except (FileNotFoundError, ValueError, yaml.YAMLError) as exc:
+        render_error(f"配置加载失败：{exc}", plain=args.plain)
+        return 1
+
+    if config.sandbox.is_bind_mode():
+        try:
+            _prepare_bind_workspace(config, plain=args.plain)
+        except ValueError as exc:
+            render_error(f"bind 工作区校验失败：{exc}", plain=args.plain)
+            return 1
 
     if not args.echo:
         api_key = _effective_api_key(config)
@@ -304,13 +417,24 @@ def cmd_run(args: argparse.Namespace) -> int:
             return 1
 
     llm_client = _build_llm_client(config, echo=args.echo)
-    agent = _build_agent(config, llm_client, approve=args.approve, plain=args.plain, plan=args.plan)
+    try:
+        agent = _build_agent(
+            config, llm_client, approve=args.approve, plain=args.plain, plan=args.plan
+        )
+    except ValueError as exc:
+        # 沙箱配置非法（如 subprocess + volume_name）时工厂会 raise ValueError，
+        # 走友好输出而不是裸 traceback。
+        render_error(f"沙箱配置错误：{exc}", plain=args.plain)
+        return 1
 
     try:
         result = asyncio.run(agent.run(args.prompt))
     except Exception as exc:  # noqa: BLE001
         render_error(f"Agent 运行出错：{exc}", plain=args.plain)
         return 1
+    finally:
+        # TD-015：谁创建谁关闭——收口沙箱 backend，避免孤儿卷泄漏。
+        agent.close()
 
     render_result(result, plain=args.plain)
     return 0

@@ -90,14 +90,16 @@ llm:
 
 ### human_approval（写操作人工确认，TD-008）
 
-人工确认在 TD-008 引入，默认关闭。启用后，仅当运行前端注入了确认 callback（如 CLI 的 `agent run/chat --approve`）时，列入 `tools` 的工具执行前才会询问用户。
+人工确认在 TD-008 引入。启用后，仅当运行前端注入了确认 callback（如 CLI 的 `agent run/chat --approve`）时，列入 `tools` 的工具执行前才会询问用户。
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `enabled` | `bool` | `False` | 是否启用人工确认。 |
+| `enabled` | `bool \| null` | `null` | 是否启用人工确认。`null` 表示未显式配置：普通模式按不启用处理；`sandbox.host_dir`（bind）模式下按 `true` 生效（TD-015 单元 C 默认保险）。 |
 | `tools` | `list[str]` | `[file_write, file_edit]` | 需要确认的工具名列表。 |
 
 - 交互语义（CLI）：`y`=本次允许；`n`=拒绝（工具返回“用户拒绝”失败，Agent 可换方案）；`a`=本会话该工具免确认。
+- 非交互环境（无 TTY / 管道）：无法询问用户，审批回调默认**拒绝**写操作，拒绝原因作为工具结果回传 LLM（TD-015 单元 C）。
+- Web UI 无确认界面：`sandbox.host_dir` 模式下未显式设 `enabled: false` 时 Web 入口拒绝启动并报错引导；显式 `false` 放行（风险自担）。
 - 优先级：`--approve` 旗标 > 配置文件。
 - 未启用或未注入 callback 时，行为完全不变。
 
@@ -151,6 +153,35 @@ agent:
 | `image_registry` | `str \| null` | `null` | 镜像源地址（TD-007，如 `docker.m.daocloud.io`）。配置后 `ensure_image()` 从该源拉取并打标回原名；官方镜像自动补 `library/` 前缀。`null` 表示从 Docker Hub 拉取。 |
 | `timeout` | `int` | `30` | 单次代码执行超时时间（秒）。 |
 | `memory_limit_mb` | `int` | `256` | 容器内存上限（MB）。 |
+| `volume_name` | `str \| null` | `null` | 持久工作区卷名（TD-015 单元 B，仅 `docker` 后端）。配置后使用固定 Docker 卷 `litmus-ws-<volume_name>`，跨会话保留 `/workspace` 文件且关闭时不删除；`null` 时使用随机卷并在关闭时清理。只允许字母、数字、`_`、`.`、`-`。 |
+| `host_dir` | `str \| null` | `null` | 宿主机目录 bind 挂载（TD-015 单元 C）。配置后 Agent 直接操作宿主机真实项目目录（容器内 `/workspace` → `host_dir`），与 `volume_name` 互斥。详见下方"bind 工作区模式"警示。 |
+
+> **⚠️ bind 工作区模式（host_dir）风险警示**
+>
+> bind 模式下 Agent 的写操作**直接落在宿主机真实目录**，误写、误删不再有沙箱兜底。启用前请确认理解以下四道保险与限制：
+>
+> 1. **git 强制快照**：`host_dir` 必须已是 git 仓库（否则拒绝启动，引导 `git init`）；启动时若工作区 dirty，自动在当前分支提交快照（信息 `litmus: pre-agent snapshot`，署名 `litmus-agent`，通过 env 级 `GIT_AUTHOR_*` 兜底，不改你的 git 配置）。docker 与 subprocess 后端同样强制。
+> 2. **写确认默认开启**：未显式配置 `agent.human_approval.enabled` 时按 `true` 生效（`file_write`/`file_edit` 执行前询问 `y/n/a`）；非交互环境（无 TTY / 管道）下默认**拒绝**写操作。显式设 `false` 可关闭，但会打 warning，风险自担。**Web UI 无确认界面**：检测到 `host_dir` 且未显式关闭审批时拒绝启动并提示。
+> 3. **敏感文件 read deny**：默认注入优先级 90 的读拒绝规则：`**/.env*`、`**/.ssh/**`、`**/*.{pem,key}`、`**/id_rsa*`、`**/.git/**`。`security.enabled` 未显式配置时按 `true` 生效；显式关闭打 warning。注意该策略约束的是**工具层**访问（`grep`/`glob` 内嵌脚本另按同口径硬编码兜底过滤）；容器内 `sandbox_exec` 执行的代码**不受策略约束**——bind 模式的真实边界是**挂载点 + git 快照 + 写确认**三件套，read deny 仅为辅助。
+> 4. **容器加固维持**：network=none、read_only 根文件系统 + tmpfs、无特权、不挂 docker.sock；bind 模式容器设 `HOME=/tmp`，POSIX 下以宿主 `uid:gid` 运行（保证写出文件属主正确）并跳过 chown；Windows 维持 nobody（Docker Desktop 文件共享层自动映射属主）。
+>
+> 其他限制：
+> - **Docker 不可用即报错，不降级** subprocess（降级等于在宿主机弱隔离裸跑，更危险）。显式配置 `backend: subprocess` + `host_dir` 视为自担风险的 opt-in。
+> - **禁止两个 Agent 同时挂载同一个 `host_dir`**（不加锁，属过度设计）。
+> - Windows 路径转换与属主映射为尽力支持（经 Docker Desktop 文件共享层）。
+> - Web UI 的 YAML 配置经环境变量 `AGENT_CONFIG` 指定（与 CLI `--config` 同格式）；bind 模式下 Web 的审批限制见上方第 2 条。
+>
+> **回滚**：快照提交在当前分支，回滚与审计命令——
+>
+> ```bash
+> git -C <host_dir> status                    # 查看 Agent 改动
+> git -C <host_dir> diff                      # 查看具体差异
+> git -C <host_dir> reset --hard <快照sha>    # 回到启动前快照（横幅会打印该命令）
+> ```
+>
+> 启动时 CLI 会打印横幅，包含挂载路径、快照 sha、写确认状态与回滚命令提示。
+
+> **工作区生命周期（TD-015）**：CLI（run/chat）与 Web UI 退出时会调用 `agent.close()` 关闭自建沙箱 backend，默认模式下随机卷随之删除（修复孤儿卷泄漏）；`volume_name` 模式卷保留，手动删除用 `docker volume rm litmus-ws-<name>`。存量孤儿卷可经 `docker volume ls -f name=hermes-workspace` 查看并手动清理。
 
 > 说明：`backend: subprocess` 为轻量 fallback（TD-002 已实现）。它使用本地子进程 + 实例临时目录作为 workspace，不提供 Docker 级隔离（无 cgroup/seccomp/网络禁用）；沙箱内 POSIX 路径（如 `/workspace/main.py`）会映射到实例临时目录内，不触碰宿主机真实路径。仅在无 Docker 环境下使用。
 
@@ -172,7 +203,7 @@ sandbox:
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `enabled` | `bool` | `False` | 是否启用安全策略引擎。 |
+| `enabled` | `bool` | `False` | 是否启用安全策略引擎。`sandbox.host_dir`（bind）模式下未显式配置时按 `true` 生效，并自动注入敏感文件 read deny（TD-015 单元 C，详见 sandbox 节警示框）。 |
 | `default_action` | `str` | `allow` | 默认动作：`allow` 或 `deny`。 |
 | `rules` | `list[dict]` | `[]` | 自定义策略规则列表。 |
 | `workspace_path` | `str` | `/workspace` | `file/path` write 的允许根（TD-006）。仅默认规则集下生效。 |
