@@ -198,6 +198,8 @@ sandbox:
 - `file_write`：在沙箱内创建或覆盖文件。
 - `file_list`：列出沙箱内目录内容。
 - `file_edit`：精确编辑沙箱内已有文件的局部内容。
+- `grep`：在沙箱内按正则搜索文件内容。
+- `glob`：在沙箱内按文件名模式匹配文件。
 - `finish`：标记任务完成并返回结果。
 
 > 注意：`context_read`、`memory_read` 与 `memory_search` 分别是上下文压缩和长期记忆的内部配套工具，不受 `tools.enabled` 控制；只要启用了对应功能，Agent 会自动注册它们。`memory_search` 支持自然语言搜索记忆（search-then-read），返回候选含 uri 供 `memory_read` 精读。

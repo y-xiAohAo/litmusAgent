@@ -72,7 +72,7 @@ class ToolResultExternalizer:
             if len(content) <= self._exec_error_preview:
                 return content, None
             preview_len = self._exec_error_preview
-        elif tool_name == "file_read":
+        elif tool_name in {"file_read", "grep", "glob"}:
             preview_len = self._file_read_preview
         else:
             preview_len = self._exec_success_preview

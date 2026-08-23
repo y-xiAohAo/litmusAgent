@@ -13,6 +13,8 @@ from agent.tools.file_list import file_list
 from agent.tools.file_read import file_read
 from agent.tools.file_write import file_write
 from agent.tools.finish import finish
+from agent.tools.glob import glob
+from agent.tools.grep import grep
 from agent.tools.memory_read import memory_read
 from agent.tools.memory_search import memory_search
 from agent.tools.sandbox_exec import sandbox_exec
@@ -35,6 +37,8 @@ __all__ = [
     "file_write",
     "file_list",
     "file_edit",
+    "grep",
+    "glob",
     "finish",
     "context_read",
     "memory_read",
@@ -145,6 +149,62 @@ def _build_tool_specs(backend: SandboxBackend) -> dict[str, ToolSpec]:
                 "additionalProperties": False,
             },
             handler=partial(file_edit, backend=backend),
+        ),
+        "grep": ToolSpec(
+            name="grep",
+            description="在沙箱内按正则搜索文件内容，返回 相对路径:行号:匹配行 列表。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "正则表达式，例如 def\\s+\\w+。",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "沙箱内的目录或文件路径，例如 /workspace。",
+                    },
+                    "include": {
+                        "type": "string",
+                        "description": "可选的文件名过滤模式（fnmatch），例如 *.py。",
+                    },
+                    "ignore_case": {
+                        "type": "boolean",
+                        "description": "是否忽略大小写，默认 false。",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "最大返回条数，默认 200，上限 1000。",
+                    },
+                },
+                "required": ["pattern", "path"],
+                "additionalProperties": False,
+            },
+            handler=partial(grep, backend=backend),
+        ),
+        "glob": ToolSpec(
+            name="glob",
+            description="在沙箱内按文件名模式匹配文件，返回每行一个相对路径（支持 ** 递归）。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "glob 模式，例如 **/*.py。",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "沙箱内的搜索根目录，默认 /workspace。",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "最大返回条数，默认 200，上限 1000。",
+                    },
+                },
+                "required": ["pattern"],
+                "additionalProperties": False,
+            },
+            handler=partial(glob, backend=backend),
         ),
         "finish": ToolSpec(
             name="finish",

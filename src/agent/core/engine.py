@@ -80,6 +80,8 @@ class ToolRegistry:
         "file_list": ("file/path", "read", "path"),
         "file_write": ("file/path", "write", "path"),
         "file_edit": ("file/path", "write", "path"),
+        "grep": ("file/path", "read", "path"),
+        "glob": ("file/path", "read", "path"),
     }
 
     def __init__(
