@@ -247,6 +247,31 @@ if __name__ == "__main__":
 
 ---
 
+## 接入 MCP 工具（TD-016）
+
+Agent 可接入 MCP server 提供的工具（`pip install agent[mcp]`）。在配置文件中
+声明 server 后，首次 `run()` 前自动连接并发现工具，以 `mcp__<server>__<tool>`
+全名注册，照常走策略 / 人工确认 / Trace 卡口：
+
+```yaml
+mcp:
+  tool_timeout: 30
+  servers:
+    - name: filesystem
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+```
+
+```bash
+agent run "用 filesystem 工具列出 /tmp 内容" --config config.yaml
+```
+
+要点：非 `trust: true` 的 server 工具默认全部需要人工确认；单 server 连接
+失败跳过不阻塞；`agent.close()` 回收子进程。**注意 MCP server 是宿主进程，
+配置即信任**——详见 [configuration.md](configuration.md) 的 mcp 章节。
+
+---
+
 ## 维护本地项目（bind 工作区模式，TD-015）
 
 默认模式下 Agent 的沙箱工作区是 Docker 卷，宿主机上看不到产物。若想让 Agent

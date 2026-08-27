@@ -202,10 +202,12 @@ async def _shutdown_close_sessions() -> None:
 
     Web session 为进程内常驻，不做 TTL 回收（Non-Goal）；仅依赖进程退出
     钩子释放资源。单个 Agent 关闭异常不影响其余 session。
+    使用异步 ``aclose()``（TD-016 同行评审 O3）：等待 MCP server 连接
+    回收完成（stdio 子进程退出）后再做同步收尾。
     """
     for agent in _sessions.values():
         try:
-            agent.close()
+            await agent.aclose()
         except Exception:  # noqa: BLE001 —— 关闭异常静默，避免阻塞 shutdown
             pass
     _sessions.clear()

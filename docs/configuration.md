@@ -250,6 +250,72 @@ tools:
 
 ---
 
+## mcp（MCP 工具接入，TD-016）
+
+接入 MCP（Model Context Protocol）server 提供的工具。需要先安装可选依赖：
+
+```bash
+pip install agent[mcp]   # 或 pip install mcp
+```
+
+> ⚠️ **供应链风险警示**：MCP server 是宿主机进程（stdio 形态）或远程服务
+> （url 形态），其工具在**宿主执行、不经沙箱**——配置即信任声明，信任级别
+> 等价于 `pip install`。只接入你信任的 server；默认所有 MCP 工具都会触发
+> 人工确认。注意：人工确认需前端注入确认 callback 才真正生效；无确认通道的
+> 部署（如裸 Python API 直接调用 `Agent`）MCP 工具将**不经确认直接执行**，
+> 请自行评估风险（可用 `trust: true` 白名单化或 `security.rules` 策略收口）。
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `tool_timeout` | `int` | `30` | 单次 MCP 工具调用强制超时（秒），防 server 僵死 |
+| `servers` | `list` | `[]` | server 列表，为空则不激活 |
+
+每个 server 条目（`command` 与 `url` 互斥且必居其一）：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `name` | `str` | server 名，只允许字母/数字/`_`/`-`，用于工具名前缀 |
+| `command` | `str` | stdio 形态：启动命令（Windows 上 `npx`/`uvx` 需 `cmd /c npx ...`） |
+| `args` | `list[str]` | stdio 形态：命令参数 |
+| `env` | `dict \| null` | stdio 形态：环境变量（给出时整体替换默认环境） |
+| `url` | `str` | SSE/HTTP 形态：端点 |
+| `headers` | `dict \| null` | SSE/HTTP 形态：静态请求头（如 Authorization） |
+| `transport` | `stdio \| sse \| http \| null` | 显式传输判别（默认 `null`）。`null` 时按启发式推断：有 `command` → `stdio`；`url` 路径以 `/sse` 结尾 → `sse`；否则 → `http`（Streamable HTTP）。显式配置时校验一致性：`stdio` 须有 `command`，`sse`/`http` 须有 `url`。 |
+| `trust` | `bool` | `false`（默认）该 server 全部工具进人工确认清单；`true` 豁免 |
+
+行为要点：
+
+- **惰性装配**：首次 `run()` 前连接 server 并发现工具，公开 API 不变。
+- **命名前缀**：发现的工具注册为 `mcp__<server>__<tool>` 全名，受
+  `tools.enabled` 白名单控制（全名匹配）。
+- **失败降级**：单 server 连接失败只记 warning 并跳过；全部失败不阻塞 Agent。
+- **僵死防护**：调用超时返回 `MCPError: 调用超时...` 失败结果，Agent 继续；
+  超时/调用失败后该 server 记入降级表，后续调用立即返回
+  `MCPError: server 已降级...` 快速失败（不自动重连）。
+- **策略锚点**：MCP 工具统一映射 resource=`mcp/server`、operation=`call`、
+  subject=`mcp/<server>`，可在 `security.rules` 里按此写自定义规则；
+  默认规则集不含 MCP 条目（人工确认是主防线）。
+- **生命周期**：同步 `agent.close()`（CLI）或异步 `await agent.aclose()`
+  （Web shutdown，等待回收完成）回收全部连接与 stdio 子进程。
+
+示例：
+
+```yaml
+mcp:
+  tool_timeout: 30
+  servers:
+    - name: filesystem
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+      trust: false
+    - name: remote-search
+      url: http://localhost:8000/sse
+      headers: {Authorization: "Bearer ..."}
+      trust: false
+```
+
+---
+
 ## 完整示例
 
 下面是一份生产环境可用的完整配置示例：
@@ -287,6 +353,8 @@ tools:
     - file_write
     - file_list
     - file_edit
+    - grep
+    - glob
     - finish
 ```
 

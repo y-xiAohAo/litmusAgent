@@ -1,7 +1,7 @@
 # CodeMap — Litmus Agent 项目总图（project mode）
 
 > 生成：2026-08-22（SDD-RIPER-ONE `create_codemap`，project 模式，drift-check 后重建）
-> 验证基线：`pytest tests/` = **901 passed, 1 skipped**（2026-08-22 实测，TD-010 + CR 回炉后）；mypy 51 文件零错误；ruff 全绿
+> 验证基线：`pytest tests/` = **924 passed, 1 skipped**（2026-08-22 实测，TD-016 + CR 回炉后）；mypy 52 文件零错误；ruff 全绿
 > 上一版：`2026-07-17_20-38_hermes-agent-project.md`（41 文件/541 用例，已过期）
 > 用途：代码库索引与上下文切片。后续会话按需按路径回读，不全量扫描。
 
@@ -124,6 +124,11 @@ sequenceDiagram
 | `sandbox/subprocess_backend.py` | 🆕 本地子进程沙箱（TD-002 修复） | `SubprocessSandboxBackend` |
 | `sandbox/__init__.py` | 工厂 | `create_sandbox_backend()` |
 
+### 4.3b MCP 接入层
+| 路径 | 职责 | 关键符号 |
+|---|---|---|
+| `src/agent/mcp_client.py` 🆕 | MCP server 连接/发现/工具包装（stdio+SSE+HTTP 三传输，惰性装配，close 回收） | `MCPManager` |
+
 ### 4.4 工具层 `tools/`
 | 路径 | 说明 |
 |---|---|
@@ -142,7 +147,7 @@ sequenceDiagram
 
 ---
 
-## 5. 测试地形（60 个测试文件，901 passed / 1 skipped）
+## 5. 测试地形（61 个测试文件 + 1 个 fake server 辅助，924 passed / 1 skipped）
 
 - 单元：`test_config / test_logging / test_core / test_agent_loop / test_state / test_planner / test_tool_router / test_llm_client`
 - 沙箱/工具：`test_sandbox / test_tools / test_tool_security / test_sandbox_security / test_subprocess_backend / test_sandbox_factory`
@@ -178,7 +183,7 @@ sequenceDiagram
 
 ```bash
 source .venv/Scripts/activate
-python -m pytest tests/ -q        # 基线 901 passed, 1 skipped
+python -m pytest tests/ -q        # 基线 924 passed, 1 skipped
 python -m mypy src/               # strict
 python -m ruff check src/ tests/  # 行宽 100
 ```

@@ -33,7 +33,7 @@ import json
 import logging
 import re
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -50,6 +50,7 @@ from agent.core.token_estimator import CharTokenEstimator, TokenEstimator
 from agent.core.tool_result_externalizer import ToolResultExternalizer
 from agent.core.trace import AgentTrace
 from agent.core.types import Message, ToolCall, ToolResult, ToolSpec
+from agent.mcp_client import MCPManager
 from agent.sandbox import create_sandbox_backend
 from agent.sandbox.base import SandboxBackend
 from agent.tools import (
@@ -127,6 +128,18 @@ class ToolRegistry:
 
     def get(self, name: str) -> ToolSpec | None:
         return self._tools.get(name)
+
+    def add_approval_tools(self, names: Iterable[str]) -> None:
+        """把工具名并入人工确认集合（TD-016）。
+
+        MCP 工具名在运行时才可知，无法在 __init__ 静态给出，故提供
+        运行时追加入口。集合原本为 None（未启用配置式确认）时创建新
+        集合——确认是否真正生效仍取决于 approval_callback 是否存在，
+        与 TD-008 语义一致。
+        """
+        if self._approval_tools is None:
+            self._approval_tools = set()
+        self._approval_tools.update(names)
 
     def list_schemas(self) -> list[dict[str, Any]]:
         return [t.to_openai_format() for t in self._tools.values()]
@@ -260,6 +273,18 @@ class ToolRegistry:
                     context={"arguments": call.arguments},
                 )
 
+        # TD-016：MCP 工具（mcp__<server>__<tool>）统一映射
+        # resource=mcp/server、operation=call、subject=mcp/<server>，
+        # 用户可在 YAML 自定义规则按此锚点写细粒度策略；默认规则集不加条目。
+        if call.name.startswith("mcp__"):
+            server_name = call.name[len("mcp__"):].split("__", 1)[0]
+            return self._policy.evaluate(
+                resource="mcp/server",
+                operation="call",
+                subject=f"mcp/{server_name}",
+                context={"arguments": call.arguments},
+            )
+
         return None
 
     @staticmethod
@@ -342,6 +367,13 @@ class Agent:
             approval_callback=approval_callback,
             approval_tools=approval_tools,
         )
+        # TD-016：MCP 惰性装配状态——首次 run() 前连接 server 并注册工具。
+        # _mcp_lock 保护装配全程：并发 run() 只装配一次（同行评审 O1）。
+        self._mcp_manager: MCPManager | None = None
+        self._mcp_connect_attempted = False
+        self._mcp_lock = asyncio.Lock()
+        self._mcp_config = config.mcp if config is not None else None
+        self._tools_enabled = config.tools.enabled if config is not None else None
         self.system_prompt = system_prompt
         self.max_turns = max_turns
         self.planner = planner
@@ -535,8 +567,13 @@ class Agent:
 
         三段清理（context_cache / memory / sandbox backend）各自 try/except
         隔离：前一段抛异常只记 warning，不中断后续段，保证自建沙箱 backend
-        一定被关闭。
+        一定被关闭。TD-016 追加第四段：MCP server 连接回收，同样隔离。
         """
+        if self._mcp_manager is not None:
+            try:
+                self._mcp_manager.close()
+            except Exception as exc:  # noqa: BLE001 —— 清理失败不阻塞后续段
+                logger.warning("MCP 连接关闭失败：%s", exc)
         if self.context_cache is not None and self._cleanup_cache_on_exit:
             try:
                 self.context_cache.cleanup()
@@ -552,6 +589,22 @@ class Agent:
                 self._sandbox_backend.close()
             except Exception as exc:  # noqa: BLE001 —— 关闭异常静默，只记日志
                 logger.warning("沙箱 backend 关闭失败：%s", exc)
+
+    async def aclose(self) -> None:
+        """异步关闭 Agent：先等待 MCP 连接回收完成，再执行同步收尾（O3）。
+
+        供事件循环仍在运行的场景使用（如 web shutdown 钩子）：
+        ``await MCPManager.aclose()`` 等待各 server 生命周期任务退出，
+        stdio 子进程随之回收后再做三段同步清理。同步 ``close()`` 保持
+        现状，供 CLI 在循环外调用；此时 ``_mcp_manager.close()`` 因
+        handles 已被 ``aclose()`` 清空而成为 no-op。
+        """
+        if self._mcp_manager is not None:
+            try:
+                await self._mcp_manager.aclose()
+            except Exception as exc:  # noqa: BLE001 —— 清理失败不阻塞后续段
+                logger.warning("MCP 连接异步关闭失败：%s", exc)
+        self.close()
 
     def reset(self) -> None:
         """重置 Agent 的运行状态。
@@ -694,7 +747,45 @@ class Agent:
         self.planner = plan
         logger.info("自动规划生成 %d 个步骤", len(descriptions))
 
+    async def _ensure_mcp_connected(self) -> None:
+        """首次 run() 前惰性连接 MCP servers 并注册其工具（TD-016）。
+
+        只在配置了 mcp.servers 时激活；单 server 失败跳过 + warning，
+        全部失败也不阻塞 Agent。非 trust 的 server 工具并入人工确认
+        集合（是否真正弹确认仍取决于 approval_callback 是否存在）。
+
+        并发防护（同行评审 O1）：``asyncio.Lock`` 保护装配全程，并发
+        run() 只装配一次；``connect()`` 抛异常时回滚标志并回收半成品
+        manager，下次 run() 可重试并把异常抛给调用方。
+        manager 赋值先于 await connect（Y4）：装配期间 close() 也能
+        看到 manager。
+
+        抛出：
+            ImportError: 配置了 mcp 段但未安装 mcp 包（中文友好提示）。
+        """
+        async with self._mcp_lock:
+            if self._mcp_connect_attempted:
+                return
+            if self._mcp_config is None or not self._mcp_config.servers:
+                self._mcp_connect_attempted = True
+                return
+            manager = MCPManager(self._mcp_config)
+            self._mcp_manager = manager
+            try:
+                await manager.connect(self.tools, enabled=self._tools_enabled)
+            except Exception:
+                # 回滚标志，下次 run() 重试；半成品连接发 stop 事件回收。
+                self._mcp_manager = None
+                manager.close()
+                raise
+            self._mcp_connect_attempted = True
+            if manager.untrusted_tools:
+                self.tools.add_approval_tools(manager.untrusted_tools)
+
     async def run(self, user_input: str) -> str:
+        # TD-016：MCP 工具惰性装配（首次 run 前，公开 API 不变）
+        await self._ensure_mcp_connected()
+
         run_id = uuid.uuid4().hex
         self.trace.start_time = datetime.now(timezone.utc)
         self.messages.append(Message(role="user", content=user_input))

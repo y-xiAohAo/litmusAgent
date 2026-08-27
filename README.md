@@ -7,9 +7,12 @@ Litmus Agent 是一个面向代码生成与执行的 LLM Agent 框架。它把"�
 ## 核心特性
 
 - **代码沙箱执行**：通过 `sandbox_exec` tool 在 Docker 容器中安全运行 LLM 生成的 Python 代码，失败时把错误返回给 LLM 自我修正。
+- **完整工具集**：默认层含 `sandbox_exec` / `grep` / `glob` / `file_read` / `file_write` / `file_edit` / `file_list` / `finish`，覆盖执行、搜索与文件读写闭环。
 - **自我纠错循环**：Agent 主循环持续调用 LLM，直到代码成功运行或达到最大轮数。
 - **交互式 CLI**：支持 `agent run` 单次运行与 `agent chat` 多轮对话，内置 Rich 美化输出。
 - **配置驱动**：通过 YAML 配置文件管理 LLM 模型、沙箱参数、工具集、安全策略与长期记忆。
+- **持久工作区**：三种工作区模式——默认随机卷（用完清理）、`volume_name` 命名卷（`litmus-ws-<name>` 跨会话保留）、`host_dir` bind 挂载宿主项目目录（git 强制快照 + 写确认默认开 + 敏感文件 read deny）。
+- **沙箱网络策略**：`network_mode` 配置化（默认 `none` 禁网），`allow_setup_network` 仅对 pip 安装意图的执行放行有网临时容器。
 - **长期记忆**：跨任务保留环境状态、用户偏好与失败模式（默认关闭，不破坏原有行为）。
 - **安全策略引擎**：可配置地拦截高危代码、文件路径操作与记忆读写。
 - **批量评测体系**：125 任务 6 批次（b1-b4 各 20 + b5 22 + b6 23，难度递进）+ 断言/LLM-judge/工具路径三重判分 + 三机制臂对照 + 重复采样 + token 成本可核算（`examples/batch_e2e.py` + `examples/batch_tasks*.py`）；QE 全量回归 44/46（96%，基线 92%）。
@@ -103,7 +106,7 @@ litmusAgent/
 │   ├── core/               # Agent 引擎、状态、Trace、错误处理、安全策略
 │   ├── llm/                # LLM 客户端（OpenAI 兼容 + EchoClient）
 │   ├── sandbox/            # Docker 沙箱后端
-│   └── tools/              # Tool 实现（sandbox_exec / file_read / finish 等）
+│   └── tools/              # Tool 实现（sandbox_exec / grep / glob / file_read / file_write / file_edit / file_list / finish）
 ├── examples/               # 可运行示例（含 batch_e2e.py 批量评测体系）
 ├── scripts/                # 工具脚本（setup.sh / setup-docker.py / hermes-memory.py）
 ├── docker-compose.yml      # Docker Compose 运行配置

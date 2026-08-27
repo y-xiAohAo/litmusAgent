@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
@@ -368,6 +368,71 @@ class ToolsConfig(BaseModel):
     enabled: list[str] | None = None
 
 
+class MCPServerConfig(BaseModel):
+    """单个 MCP server 的配置（TD-016）。
+
+    两种形态互斥且必居其一：
+      - stdio：command + args（+ 可选 env），server 是宿主子进程；
+      - SSE/HTTP：url（+ 可选 headers），server 是远程/本地 HTTP 服务。
+
+    transport（同行评审 Y2）：显式传输判别，``stdio`` / ``sse`` / ``http``；
+    None（默认）时维持启发式——有 command → stdio，url 路径以 ``/sse``
+    结尾 → SSE，否则 → Streamable HTTP。显式配置时校验一致性：
+    stdio 须有 command，sse/http 须有 url。
+
+    trust：server 级信任开关。False（默认）时该 server 的全部工具进入
+    人工确认清单；True 时豁免确认（等价于 pip install 级别的信任声明）。
+
+    name 会进入工具名前缀 mcp__<name>__<tool>，故限制为字母/数字/_/-。
+    """
+
+    name: str
+    command: str | None = None            # stdio 形态：启动命令
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] | None = None     # stdio 形态：附加环境变量
+    url: str | None = None                # SSE/HTTP 形态：服务端点
+    headers: dict[str, str] | None = None
+    transport: Literal["stdio", "sse", "http"] | None = None  # 显式传输判别
+    trust: bool = False
+
+    @model_validator(mode="after")
+    def _validate_server(self) -> MCPServerConfig:
+        """校验 name 合法、command 与 url 互斥且必居其一、transport 一致。"""
+        if not re.fullmatch(r"[a-zA-Z0-9_-]+", self.name):
+            raise ValueError(
+                f"mcp server name 含非法字符：{self.name!r}"
+                "（只允许字母、数字、_、-，将用于工具名前缀）"
+            )
+        if (self.command is None) == (self.url is None):
+            raise ValueError(
+                f"mcp server {self.name!r}：command 与 url 互斥且必居其一"
+            )
+        if self.transport == "stdio" and self.command is None:
+            raise ValueError(
+                f"mcp server {self.name!r}：transport=stdio 必须配置 command"
+            )
+        if self.transport in ("sse", "http") and self.url is None:
+            raise ValueError(
+                f"mcp server {self.name!r}：transport={self.transport} 必须配置 url"
+            )
+        return self
+
+
+class MCPConfig(BaseModel):
+    """MCP（Model Context Protocol）工具接入配置（TD-016）。
+
+    ⚠️ 供应链风险：MCP server 是宿主进程/远程服务，其工具在宿主执行、
+    不经沙箱——配置即信任声明。默认全部工具需人工确认（trust 豁免）。
+
+    tool_timeout：单次 MCP 工具调用的强制超时（秒），asyncio.wait_for
+    外层兜底，防 server 僵死（SDK 已知 cancel 不保证送达）。
+    servers：server 列表；为空或缺省 mcp 段时完全不激活。
+    """
+
+    tool_timeout: int = 30
+    servers: list[MCPServerConfig] = Field(default_factory=list)
+
+
 class AgentConfig(BaseModel):
     """顶层配置 —— 聚合所有子系统。
 
@@ -393,6 +458,7 @@ class AgentConfig(BaseModel):
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    mcp: MCPConfig = Field(default_factory=MCPConfig)
 
 
 def load_config(path: str | Path) -> AgentConfig:
