@@ -1,6 +1,6 @@
 # 归档：TD-020 流式输出与可观测渲染 — 人类视角
 
-> 完成：2026-08-22 | Spec：`mydocs/specs/2026-08-22_td-020-streaming.md` | Commit：`4edf822` + `d569d87`
+> 完成：2026-08-29 | Spec：`mydocs/specs/2026-08-29_td-020-streaming.md` | Commit：`4edf822` + `d569d87`
 
 ## 做了什么
 

@@ -1,9 +1,9 @@
 # Feature Spec — TD-010：沙箱网络策略增强（两阶段网络 + 配置化）
 
 > **层级**：Feature Spec
-> **创建**：2026-08-22（SDD-RIPER-ONE）
+> **创建**：2026-08-29（SDD-RIPER-ONE）
 > **技术债登记**：`.kimi/vibe_specs/technical-debt-spec.md` TD-010
-> **当前 phase**：Execute 完成（2026-08-22，当日 `Plan Approved`），Review 中
+> **当前 phase**：Execute 完成（2026-08-29，当日 `Plan Approved`），Review 中
 
 ---
 
@@ -101,7 +101,7 @@ bind（host_dir）模式下 `allow_setup_network` 默认仍 False；用户显式
 
 ## Resume / Handoff
 
-- **Execute（2026-08-22）**：改动 `config.py`（+network_mode/allow_setup_network）、`docker_backend.py`（network_mode 贯穿池创建；execute_code allow_network 有网临时容器，用完即毁不入池）、`base.py`/`subprocess_backend.py`（Protocol kwarg）、工厂透传 + bind 开启 warning、`sandbox_exec.py`（pip 意图 + 能力探测 → allow_network）、`tests/test_setup_network.py`（16 例）、configuration/usage 文档。
+- **Execute（2026-08-29）**：改动 `config.py`（+network_mode/allow_setup_network）、`docker_backend.py`（network_mode 贯穿池创建；execute_code allow_network 有网临时容器，用完即毁不入池）、`base.py`/`subprocess_backend.py`（Protocol kwarg）、工厂透传 + bind 开启 warning、`sandbox_exec.py`（pip 意图 + 能力探测 → allow_network）、`tests/test_setup_network.py`（16 例）、configuration/usage 文档。
 - **Validation（实测复核）**：897 passed, 1 skipped（+16）；mypy 51 文件零错误；ruff 全绿。
 - **实现说明**：allow_network=False 时工具层不传 kwarg（兼容第三方后端）；bind warning 落工厂层。
-- **真实 Docker 联网验证（2026-08-22，Docker Desktop 29.7.2 + WSL2）**：禁网池容器内 `pip install six` 失败（pip exit 1），`allow_network=True` 有网临时容器内同一命令成功（exit 0）——两阶段网络行为符合预期。**TD-010 闭环。**
+- **真实 Docker 联网验证（2026-08-29，Docker Desktop 29.7.2 + WSL2）**：禁网池容器内 `pip install six` 失败（pip exit 1），`allow_network=True` 有网临时容器内同一命令成功（exit 0）——两阶段网络行为符合预期。**TD-010 闭环。**

@@ -8,7 +8,7 @@
 2. **回调必须兜底**：所有 StreamEvents 回调调用点都要 try/except（客户端 `_safe_stream_callback`、引擎 `_emit_stream_event`）——渲染层异常永远不能中断请求。
 3. **默认关闭**：`llm.stream` / `llm.thinking` 默认 False，零行为回归；EchoClient 的流式也是 `--stream` 显式开启。
 4. **重试只在产出前**：`progress.produced` 置位后断连禁止重试（用户已看到的 token 不可收回）。
-5. **usage 取最后非 null 帧**：DeepSeek v4-flash 中间帧带 `usage: null`（2026-08-22 实测）；不支持 `include_usage` 的端点 400 时降级重试一次，降级不计 usage。
+5. **usage 取最后非 null 帧**：DeepSeek v4-flash 中间帧带 `usage: null`（2026-08-29 实测）；不支持 `include_usage` 的端点 400 时降级重试一次，降级不计 usage。
 
 ## 触点
 
@@ -24,7 +24,7 @@
 | CLI 渲染 | `cli/chat.py` `CliStreamRenderer` | rich=Live 增量 / plain=直出；工具结束标记 plain 用 [OK]/[FAIL]（GBK） |
 | 配置 | `config.py` `LLMConfig.stream/thinking` | thinking → 请求体 `thinking: {"type":"enabled"}` |
 
-## 已验证事实（真实端点，DeepSeek v4-flash，2026-08-22）
+## 已验证事实（真实端点，DeepSeek v4-flash，2026-08-29）
 
 - thinking+stream：reasoning_content 与 content 分片正常分流
 - 多轮对话回传/不回传 reasoning_content 均不 400 → 当前实现不回传（不进 Message 历史，仅渲染）

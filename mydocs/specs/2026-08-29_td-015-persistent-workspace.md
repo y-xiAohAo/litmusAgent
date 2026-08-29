@@ -1,7 +1,7 @@
 # Feature Spec — TD-015：持久工作区（Coding Agent 形态）
 
 > **层级**：Feature Spec
-> **创建**：2026-08-22 | **v2 修订**：2026-08-22（按用户裁决简化：平铺两字段、CLI 收口关闭、litmus-ws- 前缀、bind 模式 Docker 不可用时报错不降级）
+> **创建**：2026-08-29 | **v2 修订**：2026-08-29（按用户裁决简化：平铺两字段、CLI 收口关闭、litmus-ws- 前缀、bind 模式 Docker 不可用时报错不降级）
 > **技术债登记**：`.kimi/vibe_specs/technical-debt-spec.md` TD-015
 > **当前 phase**：Plan（等待 `Plan Approved`）
 > **用户决策汇总**：① B+C 整体设计、分单元执行；② bind 强制 git 快照（非 git 目录拒绝启动）；③ 人工确认"询问但可免"；④ 跨平台尽力；⑤ 配置平铺两字段（砍 mode 枚举）；⑥ 接受 CLI 层在宿主执行 git 快照；⑦ 新卷前缀 `litmus-ws-`；⑧ bind 模式 Docker 不可用即报错，不降级 subprocess
@@ -101,7 +101,7 @@ def snapshot_workspace(host_dir: str) -> str | None:
 
 CLI 入口在 `host_dir` 模式启动时依次调用。回滚文档化：`git reset --hard <sha>` / `git diff`。
 
-**已定细节（2026-08-22 澄清轮）**：
+**已定细节（2026-08-29 澄清轮）**：
 
 - 快照提交在**当前分支**（Aider 模式），回滚即 `git reset --hard <sha>`。
 - 宿主 git 未配 `user.name`/`user.email` → 快照 commit 用 env 级 `GIT_AUTHOR_NAME="litmus-agent"` 等兜底（**不改用户 git 配置**）。【用户裁决】
@@ -114,7 +114,7 @@ CLI 入口在 `host_dir` 模式启动时依次调用。回滚文档化：`git re
 - 装配规则：`host_dir` 模式且 `enabled is None` → 按 True 生效（tools 默认 `["file_write", "file_edit"]`）；用户显式配置优先，显式关闭时 warning 日志提示风险。
 - CLI y/n/**a**（本会话免确认）语义沿用。
 
-**入口差异（2026-08-22 澄清轮，均为用户裁决）**：
+**入口差异（2026-08-29 澄清轮，均为用户裁决）**：
 
 - **Web UI**：无确认界面。web 入口检测到 `host_dir` 且审批未显式关闭 → **拒绝启动**并报错引导（显式 `human_approval.enabled: false` 才放行，风险自担）。
 - **一次性 `agent run` 非交互场景（无 TTY / 管道）**：审批回调检测无 TTY 时**默认拒写**，拒绝原因回传 LLM（可改走其他路径）；交互 TTY 下正常 y/n/a。
@@ -180,14 +180,14 @@ CLI 启动时打印：挂载路径、快照 sha（若有）、写确认状态、
 
 ## Resume / Handoff
 
-- **单元 B**：✅ 已完成（2026-08-22）。改动：`config.py`（`volume_name`/`host_dir` 平铺字段 + 校验）、`sandbox/__init__.py`（工厂接线 `litmus-ws-<name>` + cleanup 语义）、`engine.py`（`_owns_sandbox_backend` 私有标记 + close 收口自建 backend）、`agent_cli.py`/`chat.py` finally 收口、`web/app.py` shutdown 统一 close、`tests/test_workspace_config.py`（13 用例）、`docs/configuration.md`。
+- **单元 B**：✅ 已完成（2026-08-29）。改动：`config.py`（`volume_name`/`host_dir` 平铺字段 + 校验）、`sandbox/__init__.py`（工厂接线 `litmus-ws-<name>` + cleanup 语义）、`engine.py`（`_owns_sandbox_backend` 私有标记 + close 收口自建 backend）、`agent_cli.py`/`chat.py` finally 收口、`web/app.py` shutdown 统一 close、`tests/test_workspace_config.py`（13 用例）、`docs/configuration.md`。
 - **Validation（实测复核）**：`pytest tests/ -q` = 820 passed, 1 skipped（+13）；mypy 50 文件零错误；ruff 全绿。
-- **同行 CR（2026-08-22，独立评审 agent）**：结论 SHIP；🟠×2（cmd_run 缺配置错误兜底、falsy 注入 backend 陷阱）+ close 三段无隔离脆弱点 + 测试缺口（web shutdown/chat 路径/异常路径零覆盖）。
+- **同行 CR（2026-08-29，独立评审 agent）**：结论 SHIP；🟠×2（cmd_run 缺配置错误兜底、falsy 注入 backend 陷阱）+ close 三段无隔离脆弱点 + 测试缺口（web shutdown/chat 路径/异常路径零覆盖）。
 - **CR 回炉（同日完成）**：两条 🟠 已修（cmd_run 补 try/except、`_build_agent` ValueError 友好化；`is not None` 显式判断）；`Agent.close()` 三段 try/except 隔离；过时注释修正；新增 10 个测试（falsy 注入、CLI 友好错误×3、close 隔离×2、web shutdown×2、异常/chat 路径 close×2），`test_workspace_config.py` 现 23 例。回炉后基线 **830 passed, 1 skipped**，mypy/ruff 全绿。
 - **偏差**：close 链路测试放 `test_workspace_config.py`（Spec 提到的 `test_engine.py` 不存在）；跨实例卷复用由工厂参数断言替代真实 Docker 集成验证；web 用 FastAPI 旧式 shutdown 钩子（与现有版本兼容）。
-- **单元 C**：✅ 代码完成（2026-08-22）。改动：`config.py`（host_dir 放开 + `is_bind_mode()`/`resolve_*()` 装配推导 + `HumanApprovalConfig.enabled` 三态 None 哨兵 + `SecurityConfig.bind_read_deny` 与 `_apply_bind_read_deny()`）、`docker_backend.py`（`workspace_bind` + `_host_bind_user()` uid 双模 + 跳过 chown + `HOME=/tmp`）、`sandbox/__init__.py`（工厂接线 + Docker 不可用报错不降级）、`cli/workspace_guard.py`（新建：git 校验 + dirty 快照 + litmus-agent env 署名兜底）、`agent_cli.py`（`_prepare_bind_workspace` + 非 TTY 默认拒写回调 + 横幅）、`web/app.py`（`AGENT_CONFIG` + bind 拒绝启动转 400）。
+- **单元 C**：✅ 代码完成（2026-08-29）。改动：`config.py`（host_dir 放开 + `is_bind_mode()`/`resolve_*()` 装配推导 + `HumanApprovalConfig.enabled` 三态 None 哨兵 + `SecurityConfig.bind_read_deny` 与 `_apply_bind_read_deny()`）、`docker_backend.py`（`workspace_bind` + `_host_bind_user()` uid 双模 + 跳过 chown + `HOME=/tmp`）、`sandbox/__init__.py`（工厂接线 + Docker 不可用报错不降级）、`cli/workspace_guard.py`（新建：git 校验 + dirty 快照 + litmus-agent env 署名兜底）、`agent_cli.py`（`_prepare_bind_workspace` + 非 TTY 默认拒写回调 + 横幅）、`web/app.py`（`AGENT_CONFIG` + bind 拒绝启动转 400）。
 - **Validation（实测复核）**：`pytest tests/ -q` = 863 passed, 1 skipped（新增 34 例：guard 8 + bind 26，真实 git 路径用 tmp_path+git CLI 实测）；mypy 51 文件零错误；ruff 全绿。
 - **偏差**：① `SecurityConfig.enabled` 保持 bool 未改三态，显式性用 pydantic `model_fields_set` 判断（语义等价）；② web 原本不读 YAML，新增 `AGENT_CONFIG` 环境变量；③ 快照执行 `git add -A` 含未跟踪文件（保证可审计）；④ read deny 实际落地为正则形式 `^\.env|`(^|/)\.env` 等 5 条。
-- **真实 Docker 手工验证（2026-08-22 完成，Windows 11 + Docker Desktop 29.7.2 + WSL2 2.7.12）**：临时 git 仓库 + bind 模式实测 10/10 通过——非 git 目录拒绝启动；dirty 自动快照（sha 可见、署名 `litmus-agent`、快照后 clean）；容器内写 `/workspace` → 宿主目录实时可见且 git status 可见改动；`.env` 读取被策略拒绝（"禁止读取 .env 等环境密钥文件"）；命名卷 `litmus-ws-td015-verify` 跨 backend 实例文件可见（对照组）。验证后卷已清理。**TD-015 完全闭环。**
+- **真实 Docker 手工验证（2026-08-29 完成，Windows 11 + Docker Desktop 29.7.2 + WSL2 2.7.12）**：临时 git 仓库 + bind 模式实测 10/10 通过——非 git 目录拒绝启动；dirty 自动快照（sha 可见、署名 `litmus-agent`、快照后 clean）；容器内写 `/workspace` → 宿主目录实时可见且 git status 可见改动；`.env` 读取被策略拒绝（"禁止读取 .env 等环境密钥文件"）；命名卷 `litmus-ws-td015-verify` 跨 backend 实例文件可见（对照组）。验证后卷已清理。**TD-015 完全闭环。**
 - **环境备注**：本机 Docker Desktop 装在用户目录（`AppData\Local\Programs\DockerDesktop`），不在 PATH；Windows 下 bind 挂载属主经 Docker Desktop 文件共享层自动映射，无需 uid 传递（与设计预期一致）。
 - **下一步**：无。TD-015 关闭。

@@ -1,7 +1,7 @@
 # CodeMap — Litmus Agent 项目总图（project mode）
 
-> 生成：2026-08-22（SDD-RIPER-ONE `create_codemap`，project 模式，drift-check 后重建）
-> 验证基线：`pytest tests/` = **973 passed, 1 skipped**（2026-08-22 实测，TD-020 + 真实端点补验后）；mypy 52 文件零错误；ruff 全绿
+> 生成：2026-08-29（SDD-RIPER-ONE `create_codemap`，project 模式，drift-check 后重建）
+> 验证基线：`pytest tests/` = **973 passed, 1 skipped**（2026-08-29 实测，TD-020 + 真实端点补验后）；mypy 52 文件零错误；ruff 全绿
 > 上一版：`2026-07-17_20-38_hermes-agent-project.md`（41 文件/541 用例，已过期）
 > 用途：代码库索引与上下文切片。后续会话按需按路径回读，不全量扫描。
 
@@ -17,7 +17,7 @@
 | 包 | name=`agent`, version=`0.1.0`, Python >= 3.10；src-layout |
 | 规模 | `src/agent/` 49 个 .py；`tests/` 56 个测试文件 |
 | 质量门禁 | `pytest tests/ -q` + `mypy src/`（strict）+ `ruff check src/ tests/`（行宽 100） |
-| venv | 项目内 `.venv/Scripts/python.exe`（2026-08-22 已补齐 fakeredis/sqlalchemy） |
+| venv | 项目内 `.venv/Scripts/python.exe`（2026-08-29 已补齐 fakeredis/sqlalchemy） |
 | Git | `master`，HEAD = `de28aa4`；未提交：`technical-debt-spec.md`、`docs/session-context.md` |
 | 依赖 | httpx, pydantic, rich, structlog, pyyaml, docker, fastapi, uvicorn, jinja2, sqlalchemy, redis, pymysql, cryptography；可选 extras: openai/anthropic |
 
@@ -173,10 +173,10 @@ sequenceDiagram
 
 ## 8. 热点与风险（Execute 前必读）
 
-1. ~~venv 依赖漂移~~（2026-08-22 已修：`pip install fakeredis sqlalchemy` 后全量基线 786 passed / 1 skipped，mypy/ruff 全绿）。
+1. ~~venv 依赖漂移~~（2026-08-29 已修：`pip install fakeredis sqlalchemy` 后全量基线 786 passed / 1 skipped，mypy/ruff 全绿）。
 2. **未提交改动**：`.kimi/vibe_specs/technical-debt-spec.md`、`docs/session-context.md`。
 3. 旧 codemap 风险已消解：TD-002（subprocess 沙箱）、Web UI、runtime 装配均已提交。
-4. 未决 TD：**技术债总表已清零**（TD-001~016 全部完成，2026-08-22）。遗留非债事项：批量评测重新基线（grep/glob 进默认工具集后新旧批次口径不可比）；`memory_limit_mb` 配置存在但工厂未透传（TD-010 调研发现的既有遗漏）。
+4. 未决 TD：**技术债总表已清零**（TD-001~016 全部完成，2026-08-29）。遗留非债事项：批量评测重新基线（grep/glob 进默认工具集后新旧批次口径不可比）；`memory_limit_mb` 配置存在但工厂未透传（TD-010 调研发现的既有遗漏）。
 5. `OpenAIClient` 缺流式输出（功能缺口）。
 
 ## 9. 常用命令

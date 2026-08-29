@@ -1,10 +1,10 @@
 # Feature Spec — TD-014：代码搜索工具（grep / glob 一等工具）
 
 > **层级**：Feature Spec
-> **创建**：2026-08-22（SDD-RIPER-ONE，Research 收口 + Plan）
-> **修订**：2026-08-22 v2——影响面分析后修订：拆分为 `grep.py`/`glob.py` 双模块（贴合"模块名=工具名=函数名"约定）；通用化参数（include/ignore_case/max_results/glob 递归）；新增 externalizer 预览分支；评测口径决策落盘
+> **创建**：2026-08-29（SDD-RIPER-ONE，Research 收口 + Plan）
+> **修订**：2026-08-29 v2——影响面分析后修订：拆分为 `grep.py`/`glob.py` 双模块（贴合"模块名=工具名=函数名"约定）；通用化参数（include/ignore_case/max_results/glob 递归）；新增 externalizer 预览分支；评测口径决策落盘
 > **技术债登记**：`.kimi/vibe_specs/technical-debt-spec.md` TD-014
-> **Codemap**：`mydocs/codemap/2026-08-22_litmus-agent-project.md`
+> **Codemap**：`mydocs/codemap/2026-08-29_litmus-agent-project.md`
 > **当前 phase**：Plan（等待 `Plan Approved`）
 
 ---
@@ -20,7 +20,7 @@
 - 默认工具集（`_build_tool_specs`，`src/agent/tools/__init__.py:50-165`）只有 6 个工具，无内容级搜索能力。
 - 评测证据：S2/S4 联调中 LLM 用 `sandbox_exec` 一把梭跳过 `file_*` 工具（`docs/evaluation-log.md:47,49`）；Batch 3 引入 `expected_tools` 路径断言（:68）。搜索工具缺失是工具面窄的结构诱因之一（非已证因果）。
 
-## 3. 影响面分析结论（2026-08-22 实测核查）
+## 3. 影响面分析结论（2026-08-29 实测核查）
 
 | 面 | 结论 | 处置 |
 |---|---|---|
@@ -135,14 +135,14 @@
 
 ## Change Log / Validation / Review
 
-- 2026-08-22 v2：影响面分析 + 通用性设计修订；用户决策×2 落盘（评测口径接受漂移、externalizer 加预览分支）。
-- 2026-08-22 Execute 完成（当日 `Plan Approved`）。实际改动：`tools/grep.py` + `tools/glob.py`（新增）、`tools/__init__.py`（注册 + `__all__`）、`core/engine.py`（`_PARAMETRIC_CHECKS` 追加两条）、`core/tool_result_externalizer.py`（grep/glob 并入 500 字符预览分支）、`tests/test_grep_glob.py`（21 用例）、`docs/configuration.md`（工具列表 +2 行）。
+- 2026-08-29 v2：影响面分析 + 通用性设计修订；用户决策×2 落盘（评测口径接受漂移、externalizer 加预览分支）。
+- 2026-08-29 Execute 完成（当日 `Plan Approved`）。实际改动：`tools/grep.py` + `tools/glob.py`（新增）、`tools/__init__.py`（注册 + `__all__`）、`core/engine.py`（`_PARAMETRIC_CHECKS` 追加两条）、`core/tool_result_externalizer.py`（grep/glob 并入 500 字符预览分支）、`tests/test_grep_glob.py`（21 用例）、`docs/configuration.md`（工具列表 +2 行）。
 - **Validation（实测）**：`pytest tests/test_grep_glob.py -v` = 21 passed；`pytest tests/ -q` = **807 passed, 1 skipped**（基线 786 + 21，无新增失败）；`mypy src/` = 50 文件零错误；`ruff check src/ tests/` 全绿。另以真实 SubprocessSandboxBackend 对 handler 做端到端抽查（include/ignore_case/截断/单文件/非法正则/`**` 递归等）全部符合预期。
 - **Execute 中发现的偏差与修复**：内嵌脚本注入 bool/None 参数初版用 `json.dumps` 生成 JSON 字面量（`false`/`null`），在 Python 脚本里非法 → 改用 `repr()`，两条测试断言同步更新。无功能性偏差。
 - **Review 三轴**：① Spec↔代码一致（§4 签名/输出约定全部落地，范围零增减）；② 方案 A 零协议改动成立，双后端兼容经真实子进程后端验证；③ 已知口径：二进制文件按 `errors="ignore"` 机制跳过探测（Spec 字面语义）；评测新旧批次不可直接对比（已决策接受漂移）。
 
 ## Resume / Handoff
 
-- **状态**：✅ 已完成（2026-08-22），Review 通过
+- **状态**：✅ 已完成（2026-08-29），Review 通过
 - **Reverse Sync**：技术债总表 TD-014 → ✅（含修复记录）；codemap §4.4/§5/§8 更新；`docs/evaluation-log.md` 优化记录 +1（含评测口径漂移警示）
 - **遗留（后续单元）**：评测重新基线；可选评测项观察 grep/glob 使用率（b3 风格 `expected_tools`）
