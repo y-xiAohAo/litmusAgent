@@ -51,6 +51,7 @@ Litmus Agent 采用分层设计：CLI 面向用户，Agent Core 编排主循环�
 - **CLI 层**：提供 `agent run`、`agent chat`、`agent config` 等人机交互入口。
 - **Agent Core**：负责主循环、消息历史、工具路由、计划追踪、错误分类与 Trace 记录。
 - **ToolRegistry**：统一管理工具注册，并在执行前通过 PolicyEngine 进行策略检查。
+- **MCP 接入层**（`mcp_client.py`）：连接外部 MCP server（stdio / SSE / HTTP），发现的工具包装为 ToolSpec 注册进 ToolRegistry，与内置工具走同一策略 / 审批 / Trace 卡口。
 - **Tools**：`sandbox_exec` 执行代码，`grep`/`glob`/`file_read`/`file_list` 检索与查看产物，`file_write`/`file_edit` 写入与编辑，`finish` 终止任务。
 - **Docker Sandbox Backend**：在隔离容器中运行 LLM 生成的代码；支持持久工作区（随机卷清理 / `volume_name` 命名卷跨会话 / `host_dir` bind 挂载宿主项目）与可配置网络策略（`network_mode` 默认 none）。
 - **LLM Client**：支持 OpenAI 兼容 API 与 EchoClient 测试桩。

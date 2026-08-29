@@ -13,6 +13,7 @@ Litmus Agent 是一个面向代码生成与执行的 LLM Agent 框架。它把"�
 - **配置驱动**：通过 YAML 配置文件管理 LLM 模型、沙箱参数、工具集、安全策略与长期记忆。
 - **持久工作区**：三种工作区模式——默认随机卷（用完清理）、`volume_name` 命名卷（`litmus-ws-<name>` 跨会话保留）、`host_dir` bind 挂载宿主项目目录（git 强制快照 + 写确认默认开 + 敏感文件 read deny）。
 - **沙箱网络策略**：`network_mode` 配置化（默认 `none` 禁网），`allow_setup_network` 仅对 pip 安装意图的执行放行有网临时容器。
+- **MCP 工具接入**：声明式接入任意 MCP server（stdio / SSE / HTTP 三种传输），发现的工具以 `mcp__<server>__<tool>` 注册进统一卡口（策略 / 人工确认 / Trace），CLI/Web 场景默认逐次人工确认、`trust` 可豁免（可选依赖 `pip install "agent[mcp]"`）。
 - **长期记忆**：跨任务保留环境状态、用户偏好与失败模式（默认关闭，不破坏原有行为）。
 - **安全策略引擎**：可配置地拦截高危代码、文件路径操作与记忆读写。
 - **批量评测体系**：125 任务 6 批次（b1-b4 各 20 + b5 22 + b6 23，难度递进）+ 断言/LLM-judge/工具路径三重判分 + 三机制臂对照 + 重复采样 + token 成本可核算（`examples/batch_e2e.py` + `examples/batch_tasks*.py`）；QE 全量回归 44/46（96%，基线 92%）。
@@ -165,6 +166,14 @@ tools:
   enabled:
     - sandbox_exec
     - finish
+
+# 可选：接入 MCP server 的工具（需 pip install "agent[mcp]"）
+mcp:
+  servers:
+    - name: filesystem
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+      trust: false   # false=每次调用前人工确认
 ```
 
 使用配置运行：

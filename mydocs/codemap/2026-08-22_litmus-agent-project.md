@@ -176,7 +176,7 @@ sequenceDiagram
 1. ~~venv 依赖漂移~~（2026-08-22 已修：`pip install fakeredis sqlalchemy` 后全量基线 786 passed / 1 skipped，mypy/ruff 全绿）。
 2. **未提交改动**：`.kimi/vibe_specs/technical-debt-spec.md`、`docs/session-context.md`。
 3. 旧 codemap 风险已消解：TD-002（subprocess 沙箱）、Web UI、runtime 装配均已提交。
-4. 未决 TD：**技术债总表已清零**（TD-001~015 全部完成，2026-08-22）。遗留非债事项：批量评测重新基线（grep/glob 进默认工具集后新旧批次口径不可比）；`memory_limit_mb` 配置存在但工厂未透传（TD-010 调研发现的既有遗漏）。
+4. 未决 TD：**技术债总表已清零**（TD-001~016 全部完成，2026-08-22）。遗留非债事项：批量评测重新基线（grep/glob 进默认工具集后新旧批次口径不可比）；`memory_limit_mb` 配置存在但工厂未透传（TD-010 调研发现的既有遗漏）。
 5. `OpenAIClient` 缺流式输出（功能缺口）。
 
 ## 9. 常用命令
