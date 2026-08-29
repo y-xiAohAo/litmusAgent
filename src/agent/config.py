@@ -54,6 +54,12 @@ class LLMConfig(BaseModel):
     base_url: str = "https://api.openai.com/v1"       # API 端点地址
     temperature: float = 0.7                           # 生成温度（0-1）
     max_tokens: int = 4096                             # 每次回复的最大 token 数
+    # TD-020：流式输出开关。开启后主循环改走 chat_stream（SSE），
+    # 配合 CLI 注入的 StreamEvents 实现逐字渲染；默认关闭，行为零变化。
+    stream: bool = False                               # 流式输出（SSE）开关
+    # TD-020：DeepSeek V4 思考模式开关。开启后请求体携带
+    # thinking: {"type": "enabled"}，响应中的 reasoning_content 被解析展示。
+    thinking: bool = False                             # DeepSeek V4 思考模式
 
 
 class ContextCompressionConfig(BaseModel):
@@ -446,7 +452,7 @@ class AgentConfig(BaseModel):
 
     示例 YAML：
         llm:
-          model: deepseek-chat
+          model: deepseek-v4-flash
           temperature: 0.2
         agent:
           max_turns: 15

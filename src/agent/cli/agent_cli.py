@@ -17,12 +17,12 @@ import sys
 import yaml
 
 from agent import __version__
-from agent.cli.chat import make_cli_approval_callback, run_chat_loop
+from agent.cli.chat import CliStreamRenderer, make_cli_approval_callback, run_chat_loop
 from agent.cli.render import render_config, render_error, render_result
 from agent.cli.workspace_guard import apply_bind_safeguards
 from agent.config import AgentConfig, load_config
 from agent.core.engine import Agent, ApprovalCallback
-from agent.llm import BaseLLMClient, EchoClient, OpenAIClient
+from agent.llm import BaseLLMClient, EchoClient, OpenAIClient, StreamEvents
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +100,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="启用自动规划（run 前先由 LLM 分解任务步骤）",
     )
+    run_parser.add_argument(
+        "--stream",
+        action="store_true",
+        help="启用流式输出（逐字渲染回复与工具进度；等同配置 llm.stream: true）",
+    )
     # config 子命令
     config_parser = subparsers.add_parser("config", help="显示当前生效配置摘要")
     config_parser.add_argument(
@@ -146,6 +151,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--plan",
         action="store_true",
         help="启用自动规划（run 前先由 LLM 分解任务步骤）",
+    )
+    chat_parser.add_argument(
+        "--stream",
+        action="store_true",
+        help="启用流式输出（逐字渲染回复与工具进度；等同配置 llm.stream: true）",
     )
     return parser
 
@@ -230,6 +240,7 @@ def _build_llm_client(config: AgentConfig, echo: bool) -> BaseLLMClient:
         base_url=config.llm.base_url or None,
         temperature=config.llm.temperature,
         max_tokens=config.llm.max_tokens,
+        thinking=config.llm.thinking,
     )
 
 
@@ -302,6 +313,7 @@ def _build_agent(
     approve: bool = False,
     plain: bool = False,
     plan: bool = False,
+    stream_events: StreamEvents | None = None,
 ) -> Agent:
     """根据配置与 LLMClient 构造 Agent。
 
@@ -311,6 +323,8 @@ def _build_agent(
         approve: 是否强制启用写操作人工确认（覆盖配置文件）。
         plain: 是否使用纯文本交互（无 Rich）。
         plan: 是否强制启用自动规划（覆盖配置文件）。
+        stream_events: TD-020 流式渲染回调；仅在 config.llm.stream
+            开启时由引擎真正使用。
 
     Returns:
         初始化后的 Agent 实例。
@@ -336,7 +350,22 @@ def _build_agent(
         max_turns=config.agent.max_turns,
         config=config,
         approval_callback=approval_callback,
+        stream_events=stream_events,
     )
+
+
+def _make_stream_renderer(
+    args: argparse.Namespace, config: AgentConfig
+) -> CliStreamRenderer | None:
+    """TD-020：--stream 或配置 llm.stream 开启时构造 CLI 流式渲染器。
+
+    开启时同步把 config.llm.stream 置 True，使引擎主循环改走
+    chat_stream（SSE），渲染回调经 StreamEvents 注入 Agent。
+    """
+    if getattr(args, "stream", False) or config.llm.stream:
+        config.llm.stream = True
+        return CliStreamRenderer(plain=args.plain)
+    return None
 
 
 def cmd_chat(args: argparse.Namespace) -> int:
@@ -372,16 +401,18 @@ def cmd_chat(args: argparse.Namespace) -> int:
             return 1
 
     llm_client = _build_llm_client(config, echo=args.echo)
+    stream_renderer = _make_stream_renderer(args, config)
     try:
         agent = _build_agent(
-            config, llm_client, approve=args.approve, plain=args.plain, plan=args.plan
+            config, llm_client, approve=args.approve, plain=args.plain, plan=args.plan,
+            stream_events=stream_renderer.events if stream_renderer else None,
         )
     except ValueError as exc:
         # 沙箱配置非法（如 subprocess + volume_name）时工厂会 raise ValueError，
         # 走友好输出而不是裸 traceback。
         render_error(f"沙箱配置错误：{exc}", plain=args.plain)
         return 1
-    return run_chat_loop(agent, plain=args.plain)
+    return run_chat_loop(agent, plain=args.plain, stream_renderer=stream_renderer)
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -417,9 +448,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             return 1
 
     llm_client = _build_llm_client(config, echo=args.echo)
+    stream_renderer = _make_stream_renderer(args, config)
     try:
         agent = _build_agent(
-            config, llm_client, approve=args.approve, plain=args.plain, plan=args.plan
+            config, llm_client, approve=args.approve, plain=args.plain, plan=args.plan,
+            stream_events=stream_renderer.events if stream_renderer else None,
         )
     except ValueError as exc:
         # 沙箱配置非法（如 subprocess + volume_name）时工厂会 raise ValueError，
@@ -430,13 +463,19 @@ def cmd_run(args: argparse.Namespace) -> int:
     try:
         result = asyncio.run(agent.run(args.prompt))
     except Exception as exc:  # noqa: BLE001
+        if stream_renderer is not None:
+            stream_renderer.finish()
         render_error(f"Agent 运行出错：{exc}", plain=args.plain)
         return 1
     finally:
         # TD-015：谁创建谁关闭——收口沙箱 backend，避免孤儿卷泄漏。
         agent.close()
 
-    render_result(result, plain=args.plain)
+    if stream_renderer is not None:
+        # TD-020：回复已逐字流式渲染，只做收尾，不重复输出全文。
+        stream_renderer.finish()
+    else:
+        render_result(result, plain=args.plain)
     return 0
 
 

@@ -9,12 +9,122 @@ import asyncio
 from typing import Any
 
 from rich.console import Console
+from rich.live import Live
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
 
 from agent.cli.render import render_error, render_result, render_tool_summary
 from agent.core.engine import Agent, ApprovalCallback
 from agent.core.types import ToolCall
+from agent.llm.base import StreamEvents
+
+
+class CliStreamRenderer:
+    """CLI 流式渲染器（TD-020）：把 StreamEvents 映射到终端输出。
+
+    plain 模式：
+      - on_token → ``print(text, end="", flush=True)`` 直出；
+      - on_reasoning → 首片前打 ``[thinking]`` 前缀后同样直出；
+      - on_tool_start / on_tool_end → ``→ name args`` 与 ``[OK]/[FAIL] name``
+        进度行（plain 用 ASCII 标记，兼容 Windows GBK 终端）；
+
+    rich 模式：
+      - content 用 Rich ``Live`` 增量渲染 Markdown；
+      - 思考链灰色弱化直出（终端滚动回显无法真正折叠，属 Spec §3.3
+        "折叠"口径的已知简化）；
+      - 工具进度行同上格式，着色区分成功/失败。
+
+    ``finish()`` 在一轮 ``agent.run()`` 结束后调用：收尾 Live、补换行。
+    调用方在流式模式下应跳过 ``render_result``（内容已逐字展示）。
+    """
+
+    def __init__(self, plain: bool = False) -> None:
+        """初始化渲染器。
+
+        参数：
+          plain: True 时纯文本直出（适合脚本管道 / 测试断言）。
+        """
+        self._plain = plain
+        self._console = None if plain else Console()
+        self._buffer: list[str] = []
+        self._live: Live | None = None
+        self._reasoning_started = False
+        self.events = StreamEvents(
+            on_token=self._on_token,
+            on_reasoning=self._on_reasoning,
+            on_tool_start=self._on_tool_start,
+            on_tool_end=self._on_tool_end,
+        )
+
+    def _stop_live(self) -> None:
+        """停止当前 Live 渲染（内容分片继续时会自动重建）。"""
+        if self._live is not None:
+            self._live.stop()
+            self._live = None
+
+    def _on_token(self, text: str) -> None:
+        """content 分片回调：plain 直出，rich 走 Live 增量 Markdown。"""
+        if self._plain or self._console is None:
+            print(text, end="", flush=True)
+            return
+        self._buffer.append(text)
+        if self._live is None:
+            self._live = Live(
+                Markdown("".join(self._buffer)),
+                console=self._console,
+                refresh_per_second=12,
+            )
+            self._live.start()
+        else:
+            self._live.update(Markdown("".join(self._buffer)))
+
+    def _on_reasoning(self, text: str) -> None:
+        """reasoning_content 分片回调：plain 带 [thinking] 前缀，rich 灰色。"""
+        if self._plain or self._console is None:
+            if not self._reasoning_started:
+                print("\n[thinking] ", end="", flush=True)
+                self._reasoning_started = True
+            print(text, end="", flush=True)
+            return
+        self._stop_live()
+        if not self._reasoning_started:
+            self._console.print("[dim]── 思考链 ──[/dim]")
+            self._reasoning_started = True
+        self._console.print(f"[dim]{text}[/dim]", end="", highlight=False)
+
+    def _on_tool_start(self, name: str, args_summary: str) -> None:
+        """工具执行前回调：打印进度行。
+
+        同时清空 content buffer（TD-020 评审 O1）：工具调用意味着新一轮
+        LLM 输出即将开始，上一轮已渲染的 Markdown 不应再混入 Live 增量
+        渲染，否则第二轮会把上一轮全文重复渲染一遍。
+        """
+        line = f"→ {name} {args_summary}"
+        if self._plain or self._console is None:
+            print(f"\n{line}", flush=True)
+            return
+        self._stop_live()
+        self._buffer.clear()
+        self._console.print(f"[cyan]{line}[/cyan]")
+
+    def _on_tool_end(self, name: str, ok: bool) -> None:
+        """工具执行后回调：[OK] 成功 / [FAIL] 失败（plain 用 ASCII，兼容
+        Windows GBK 终端，TD-020 评审 Y4；rich 模式保留 ✓/✗ 着色）。"""
+        if self._plain or self._console is None:
+            mark = "[OK]" if ok else "[FAIL]"
+            print(f"{mark} {name}", flush=True)
+            return
+        mark = "✓" if ok else "✗"
+        style = "green" if ok else "red"
+        self._console.print(f"[{style}]{mark} {name}[/{style}]")
+
+    def finish(self) -> None:
+        """一轮 run() 结束后的收尾：停 Live、补换行、重置分轮状态。"""
+        self._stop_live()
+        print(flush=True)
+        self._buffer.clear()
+        self._reasoning_started = False
 
 
 def make_cli_approval_callback(tools: set[str], plain: bool = False) -> ApprovalCallback:
@@ -161,12 +271,18 @@ def _read_user_input(plain: bool = False) -> str | None:
         return None
 
 
-def run_chat_loop(agent: Agent, plain: bool = False) -> int:
+def run_chat_loop(
+    agent: Agent,
+    plain: bool = False,
+    stream_renderer: CliStreamRenderer | None = None,
+) -> int:
     """运行交互式对话循环。
 
     Args:
         agent: 已构造好的 Agent 实例。
         plain: 是否禁用 Rich 样式。
+        stream_renderer: TD-020 流式渲染器；传入时每轮回复已逐字展示，
+            循环内跳过 render_result / render_tool_summary，仅做收尾。
 
     Returns:
         退出码：0 正常退出。
@@ -197,13 +313,21 @@ def run_chat_loop(agent: Agent, plain: bool = False) -> int:
             try:
                 result = loop.run_until_complete(agent.run(user_input))
             except KeyboardInterrupt:
+                if stream_renderer is not None:
+                    stream_renderer.finish()
                 _render_info("当前运行已中止。", plain=plain)
                 continue
             except Exception as exc:  # noqa: BLE001
+                if stream_renderer is not None:
+                    stream_renderer.finish()
                 render_error(f"Agent 运行出错：{exc}", plain=plain)
                 continue
 
             tool_names = _extract_tool_summary(agent, before_count)
+            if stream_renderer is not None:
+                # TD-020：回复与工具进度已逐字渲染，只做收尾，不重复输出。
+                stream_renderer.finish()
+                continue
             if tool_names:
                 render_tool_summary(tool_names, plain=plain)
             render_result(result, plain=plain)

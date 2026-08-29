@@ -27,10 +27,10 @@
 | TD-014 | 代码搜索工具缺失（无 grep/glob 类一等工具） | — | 🟡 低-中 | ✅ 已完成（2026-08-22，grep/glob 双模块 + 策略卡口 + externalizer 预览分支） | ❌ 否 | 1-2 天 |
 | TD-015 | 工作区无法跨会话持久 / 不能维护宿主项目（Coding Agent 形态缺口） | — | 🔴 高 | ✅ 已完成（2026-08-22：单元 B+C 落地，真实 Docker 验证 10/10 通过，Spec：`mydocs/specs/2026-08-22_td-015-persistent-workspace.md`） | ✅ 是 | 3-5 天 |
 | TD-016 | 不支持 MCP 工具接入（工具注册仅内置） | — | 🟠 中 | ✅ 已完成（2026-08-22：三传输 + 惰性装配 + 默认全确认；CR 回炉修装配竞态/私有导入/close 回收；924 passed，Spec：`mydocs/specs/2026-08-22_td-016-mcp-tools.md`） | ⚠️ 间接 | 1-2 天 |
-| TD-017 | `memory_limit_mb` 配置存在但工厂未透传 | — | 🟡 低 | ✅ 已完成（2026-08-29：`__init__` 新增 `mem_limit` + 工厂透传 + 3 例测试；929 passed） | ❌ 否 | 0.1 天 |
-| TD-018 | 容器加固缺 `cap_drop` / `no-new-privileges` | — | 🟡 低-中 | ✅ 已完成（2026-08-29：`cap_drop=ALL`+`cap_add=CHOWN`+`no-new-privileges`，真实 Docker 冒烟通过；929 passed） | ⚠️ 安全加固 | 0.5 天 |
-| TD-019 | MCP server 超时降级后无重连机制 | — | 🟡 低-中 | ✅ 已完成（2026-08-29：`degrade_ttl` 降级冷却 + TTL 过期惰性重连） | ❌ 否 | 0.5 天 |
-| TD-020 | `OpenAIClient` 无流式输出 | — | 🟡 低 | ⏳ 候选（2026-08-22 登记） | ❌ 否 | 0.5-1 天 |
+| TD-017 | `memory_limit_mb` 配置存在但工厂未透传 | — | 🟡 低 | ✅ 已完成（2026-08-22：`__init__` 新增 `mem_limit` + 工厂透传 + 3 例测试；929 passed） | ❌ 否 | 0.1 天 |
+| TD-018 | 容器加固缺 `cap_drop` / `no-new-privileges` | — | 🟡 低-中 | ✅ 已完成（2026-08-22：`cap_drop=ALL`+`cap_add=CHOWN`+`no-new-privileges`，真实 Docker 冒烟通过；929 passed） | ⚠️ 安全加固 | 0.5 天 |
+| TD-019 | MCP server 超时降级后无重连机制 | — | 🟡 低-中 | ✅ 已完成（2026-08-22：`degrade_ttl` 降级冷却 + TTL 过期惰性重连） | ❌ 否 | 0.5 天 |
+| TD-020 | `OpenAIClient` 无流式输出 | — | 🟡 低 | ✅ 已完成（2026-08-22：chat_stream 默认回退 + SSE 解析 + 思考链捕获 + CLI 三层渲染 + DeepSeek V4 适配；reasoning_content 多轮回传待真实端点补验；963 passed） | ❌ 否 | 0.5-1 天 |
 | TD-021 | bind 模式缺会话内 `/undo` `/diff` git 交互 | — | 🟡 低 | ⏳ 候选（2026-08-22 登记） | ❌ 否 | 0.5-1 天 |
 | TD-022 | Web UI 无写操作确认面板 | — | 🟡 低 | ⏳ 候选（2026-08-22 登记） | ❌ 否 | 0.5-1 天 |
 
@@ -701,19 +701,19 @@ Batch 5（记忆专项批量评测）试点实证：默认 `RuleMemoryExtractor`
 
 **问题**：`SandboxConfig.memory_limit_mb`（`config.py:301-307`）用户可配置，但 `create_sandbox_backend`（`sandbox/__init__.py:33-90`）不透传，`DockerSandboxBackend.__init__` 的 `mem_limit` 永远是默认值——用户配置被静默忽略。TD-010 调研时发现。**修法**：工厂透传一行 + 测试一例。
 
-**修复记录（2026-08-29，FAST 通道回写）**：`DockerSandboxBackend.__init__` 新增 `mem_limit: str | None = None`（原参数本不存在；docker 风格字符串，None=不限制），`_do_create_container` 以其为默认 `mem_limit`（调用方显式传参优先）；工厂两个 docker 分支（含 bind）透传 `f"{memory_limit_mb}m"`，config 缺省镜像默认值 256。测试：`test_sandbox.py` +2（实例默认生效/显式覆盖）、`test_sandbox_factory.py` +3（透传/默认/bind 分支）。`docs/configuration.md` 字段说明同步。全量 929 passed / 1 skipped，mypy/ruff 全绿。
+**修复记录（2026-08-22，FAST 通道回写）**：`DockerSandboxBackend.__init__` 新增 `mem_limit: str | None = None`（原参数本不存在；docker 风格字符串，None=不限制），`_do_create_container` 以其为默认 `mem_limit`（调用方显式传参优先）；工厂两个 docker 分支（含 bind）透传 `f"{memory_limit_mb}m"`，config 缺省镜像默认值 256。测试：`test_sandbox.py` +2（实例默认生效/显式覆盖）、`test_sandbox_factory.py` +3（透传/默认/bind 分支）。`docs/configuration.md` 字段说明同步。全量 929 passed / 1 skipped，mypy/ruff 全绿。
 
 ### TD-018：容器加固缺 `cap_drop` / `no-new-privileges`
 
 **问题**：容器加固现状为 non-root + read_only + tmpfs + seccomp（可选），但没有 `--cap-drop ALL` 和 `security_opt: no-new-privileges`（TD-010 CR 🟡-3 登记）。行业标准加固件。**修法**：`_do_create_container` 的 create_kwargs 加 `cap_drop=["ALL"]`、`security_opt` 追加 `no-new-privileges`；验证既有测试不碎（mock 断言需同步）；真实 Docker 冒烟一次。
 
-**修复记录（2026-08-29，FAST 通道回写）**：create_kwargs 加 `cap_drop=["ALL"]` + `security_opt=["no-new-privileges"]`（seccomp 走 setdefault 追加，合并非覆盖）。**实测发现的交互**：`cap_drop=ALL` 使 EVAL-010 的 root exec `chown /workspace` 因缺 CAP_CHOWN 报 EPERM（volume 模式下 workspace 将不可写）——故回加 `cap_add=["CHOWN"]`（最小集合；载荷以 nobody 运行本无 cap，`no-new-privileges` 阻断 setuid/file-caps 提权，实测 `capsh` 语义下 nobody 无法获得 CHOWN）。实验证据：`docker run --cap-drop ALL` chown → EPERM；`--cap-add CHOWN` 后 chown 成功且 /workspace 变为 nobody:nogroup。测试：全参断言/默认加固断言同步 +3 处，seccomp 用例改断言合并。真实 Docker 冒烟：建容器执行 `print(1)` 输出 1，HostConfig 实测 CapDrop=[ALL]/CapAdd=[CHOWN]/SecurityOpt=[no-new-privileges]/Memory=256MiB，put_file→get_file 跨调用一致。全量 929 passed / 1 skipped，mypy/ruff 全绿。
+**修复记录（2026-08-22，FAST 通道回写）**：create_kwargs 加 `cap_drop=["ALL"]` + `security_opt=["no-new-privileges"]`（seccomp 走 setdefault 追加，合并非覆盖）。**实测发现的交互**：`cap_drop=ALL` 使 EVAL-010 的 root exec `chown /workspace` 因缺 CAP_CHOWN 报 EPERM（volume 模式下 workspace 将不可写）——故回加 `cap_add=["CHOWN"]`（最小集合；载荷以 nobody 运行本无 cap，`no-new-privileges` 阻断 setuid/file-caps 提权，实测 `capsh` 语义下 nobody 无法获得 CHOWN）。实验证据：`docker run --cap-drop ALL` chown → EPERM；`--cap-add CHOWN` 后 chown 成功且 /workspace 变为 nobody:nogroup。测试：全参断言/默认加固断言同步 +3 处，seccomp 用例改断言合并。真实 Docker 冒烟：建容器执行 `print(1)` 输出 1，HostConfig 实测 CapDrop=[ALL]/CapAdd=[CHOWN]/SecurityOpt=[no-new-privileges]/Memory=256MiB，put_file→get_file 跨调用一致。全量 929 passed / 1 skipped，mypy/ruff 全绿。
 
 ### TD-019：MCP server 超时降级后无重连机制
 
 **问题**：TD-016 CR Y3——server 超时降级后所有调用快速失败，唯一的恢复途径是重启 Agent。长会话里一次网络抖动就永久失去该 server。**修法**：降级状态加 TTL（如 60s）过期后下次调用先尝试重连（新 ClientSession），重连成功清标记；或提供显式 `mcp__reconnect` 管理入口。需小 Spec 定口径。
 
-**修复记录（2026-08-29，FAST 通道回写）**：采用"降级 TTL + 惰性重连"口径（不做显式管理入口，不做后台线程）。`MCPConfig` 新增 `degrade_ttl: int = 60`；`mcp_client.py` 降级表改为 `server → (原因, monotonic 时间戳)`，`_wrap_tool` handler 改为调用时经 `_sessions` 动态解析 session（重连后旧 ToolSpec 自动指向新 session，无需重新注册工具）；新增 `_degrade_gate`（TTL 内快速失败 → 过期后在 `_reconnect_lock` 内双重检查并惰性重连）、`_reconnect_server`（旧生命周期任务先 stop 回收再在同一事件循环建新的专属任务，满足 anyio cancel scope 任务绑定）与 `_reconnect_lifecycle`（复用初次连接的 `_open_session` 路径，不重新发现工具）；`close()/aclose()` 置 `_closed` 禁止关闭后再重连。**实测坑**：SSE 形态下 MCPServer 单例在活跃连接被 kill 后内部状态污染同实例重启的 app（新连接触发 ASGI duplicate response.start 崩溃）——故 kill→重启实测走 stdio 子进程（`FAKE_MCP_PID_FILE` + `os.kill` SIGTERM，重连重新拉起子进程）。测试：`tests/test_mcp_tools.py` 新增 `TestDegradeReconnect` 5 例（TTL 配置默认/自定义、TTL 内不重连、过期重连成功、重连失败刷新时间戳、stdio kill→重连恢复），时间控制经 monkeypatch `mcp_client._monotonic` 假时钟。`docs/configuration.md` mcp 段补 `degrade_ttl` 字段与重连行为。全量 934 passed / 1 skipped，mypy 52 文件零错误，ruff 全绿。
+**修复记录（2026-08-22，FAST 通道回写）**：采用"降级 TTL + 惰性重连"口径（不做显式管理入口，不做后台线程）。`MCPConfig` 新增 `degrade_ttl: int = 60`；`mcp_client.py` 降级表改为 `server → (原因, monotonic 时间戳)`，`_wrap_tool` handler 改为调用时经 `_sessions` 动态解析 session（重连后旧 ToolSpec 自动指向新 session，无需重新注册工具）；新增 `_degrade_gate`（TTL 内快速失败 → 过期后在 `_reconnect_lock` 内双重检查并惰性重连）、`_reconnect_server`（旧生命周期任务先 stop 回收再在同一事件循环建新的专属任务，满足 anyio cancel scope 任务绑定）与 `_reconnect_lifecycle`（复用初次连接的 `_open_session` 路径，不重新发现工具）；`close()/aclose()` 置 `_closed` 禁止关闭后再重连。**实测坑**：SSE 形态下 MCPServer 单例在活跃连接被 kill 后内部状态污染同实例重启的 app（新连接触发 ASGI duplicate response.start 崩溃）——故 kill→重启实测走 stdio 子进程（`FAKE_MCP_PID_FILE` + `os.kill` SIGTERM，重连重新拉起子进程）。测试：`tests/test_mcp_tools.py` 新增 `TestDegradeReconnect` 5 例（TTL 配置默认/自定义、TTL 内不重连、过期重连成功、重连失败刷新时间戳、stdio kill→重连恢复），时间控制经 monkeypatch `mcp_client._monotonic` 假时钟。`docs/configuration.md` mcp 段补 `degrade_ttl` 字段与重连行为。全量 934 passed / 1 skipped，mypy 52 文件零错误，ruff 全绿。
 
 ### TD-020：`OpenAIClient` 无流式输出
 

@@ -40,6 +40,8 @@ llm:
 | `base_url` | `str` | `https://api.openai.com/v1` | OpenAI 兼容端点地址。 |
 | `temperature` | `float` | `0.7` | 生成温度。代码任务建议 `0.1–0.3`。 |
 | `max_tokens` | `int` | `4096` | 每次回复的最大 token 数。 |
+| `stream` | `bool` | `false` | 流式输出（TD-020）。开启后 CLI 逐字渲染回复与工具进度（也可 `agent run --stream`）。 |
+| `thinking` | `bool` | `false` | DeepSeek V4 思考模式。开启后请求体带 `thinking: {"type": "enabled"}`，思考链（`reasoning_content`）随流式渲染展示。 |
 
 示例：
 

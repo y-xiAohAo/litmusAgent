@@ -503,7 +503,7 @@ async def main() -> int:
             return 1
         client = OpenAIClient(
             api_key=api_key,
-            model=os.environ.get("OPENAI_MODEL", "deepseek-chat"),
+            model=os.environ.get("OPENAI_MODEL", "deepseek-v4-flash"),
             base_url=os.environ.get(
                 "OPENAI_BASE_URL", "https://api.deepseek.com/v1"
             ),

@@ -50,6 +50,7 @@ from agent.core.token_estimator import CharTokenEstimator, TokenEstimator
 from agent.core.tool_result_externalizer import ToolResultExternalizer
 from agent.core.trace import AgentTrace
 from agent.core.types import Message, ToolCall, ToolResult, ToolSpec
+from agent.llm.base import StreamEvents
 from agent.mcp_client import MCPManager
 from agent.sandbox import create_sandbox_backend
 from agent.sandbox.base import SandboxBackend
@@ -348,8 +349,13 @@ class Agent:
         summarizer_llm_client: Any | None = None,
         memory_manager: MemoryManager | None = None,
         approval_callback: ApprovalCallback | None = None,
+        stream_events: StreamEvents | None = None,
     ) -> None:
         self.llm = llm_client
+        # TD-020：可选的流式渲染回调（由 CLI/Web 装配层注入）；
+        # 仅当 config.llm.stream 开启时主循环改走 chat_stream。
+        self._stream_events = stream_events
+        self._config_stream = config is not None and config.llm.stream
         policy = (
             config.security.build_policy_engine() if config is not None else None
         )
@@ -624,6 +630,39 @@ class Agent:
         """获取本次 Agent 运行的执行轨迹。"""
         return self.trace
 
+    def _emit_stream_event(self, callback: Callable[..., None] | None, *args: Any) -> None:
+        """安全触发流式渲染回调（TD-020）。
+
+        渲染层回调抛出的异常只记 warning，绝不影响引擎主流程。
+        """
+        if callback is None:
+            return
+        try:
+            callback(*args)
+        except Exception:  # noqa: BLE001 —— 渲染层异常不炸引擎
+            logger.warning("流式渲染回调异常", exc_info=True)
+
+    async def _chat_llm(
+        self,
+        openai_messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+    ) -> dict[str, Any]:
+        """主循环 LLM 调用点（TD-020）。
+
+        config.llm.stream 开启且注入了 stream_events 时改走 chat_stream
+        （逐分片回调渲染层），否则走原 chat()；两者返回 dict 结构一致，
+        聚合后的处理逻辑零改动。
+        """
+        if self._config_stream and self._stream_events is not None:
+            streamed: dict[str, Any] = await self.llm.chat_stream(
+                messages=openai_messages,
+                tools=tools,
+                events=self._stream_events,
+            )
+            return streamed
+        response: dict[str, Any] = await self.llm.chat(messages=openai_messages, tools=tools)
+        return response
+
     def _finalize_run(self, phase: str) -> None:
         """结束本次运行，更新 State、Trace 时间戳，并记录最终状态转换。
 
@@ -837,9 +876,9 @@ class Agent:
                     },
                 )
 
-                response = await self.llm.chat(
-                    messages=openai_messages,
-                    tools=self.tools.list_schemas() or None,
+                response = await self._chat_llm(
+                    openai_messages,
+                    self.tools.list_schemas() or None,
                 )
 
                 # 记录 LLM 响应（content 做摘要，避免 Trace 过大）
@@ -856,17 +895,31 @@ class Agent:
                 )
 
                 tool_calls_data = response.get("tool_calls")
+                # TD-020 评审 O4：arguments 非法 JSON 不穿透 run()，
+                # 解析失败记入 arg_parse_errors，执行阶段构造失败 ToolResult
+                # 回喂 LLM，走既有错误恢复链。
+                tool_calls: list[ToolCall] | None = None
+                arg_parse_errors: dict[str, str] = {}
+                if tool_calls_data:
+                    tool_calls = []
+                    for tc in tool_calls_data:
+                        try:
+                            arguments = json.loads(tc["function"]["arguments"])
+                        except json.JSONDecodeError as exc:
+                            logger.warning(
+                                "工具参数 JSON 解析失败：%s，arguments=%r",
+                                tc["function"]["name"],
+                                tc["function"]["arguments"][:200],
+                            )
+                            arguments = {}
+                            arg_parse_errors[tc["id"]] = str(exc)
+                        tool_calls.append(ToolCall(
+                            id=tc["id"], name=tc["function"]["name"], arguments=arguments,
+                        ))
                 assistant_msg = Message(
                     role="assistant",
                     content=response.get("content", "") or "",
-                    tool_calls=(
-                        [
-                            ToolCall(id=tc["id"], name=tc["function"]["name"],
-                                     arguments=json.loads(tc["function"]["arguments"]))
-                            for tc in tool_calls_data
-                        ]
-                        if tool_calls_data else None
-                    ),
+                    tool_calls=tool_calls,
                 )
                 self.messages.append(assistant_msg)
 
@@ -879,7 +932,32 @@ class Agent:
                 fatal_occurred = False
                 any_failure = False
                 for tc in assistant_msg.tool_calls:
-                    result = await self.tools.execute(tc)
+                    # TD-020：工具执行进度回调（渲染层异常已由 _emit_stream_event 兜底）；
+                    # 评审 Y2：与 content 流式语义对齐，仅 stream 开启时才发。
+                    if self._config_stream and self._stream_events is not None:
+                        self._emit_stream_event(
+                            self._stream_events.on_tool_start,
+                            tc.name,
+                            json.dumps(tc.arguments, ensure_ascii=False)[:100],
+                        )
+                    # 评审 O4：arguments JSON 解析失败的调用不进入执行器，
+                    # 直接构造失败 ToolResult 回喂 LLM 走错误恢复链。
+                    if tc.id in arg_parse_errors:
+                        result = ToolResult(
+                            tool_call_id=tc.id,
+                            content=(
+                                f"JSONDecodeError: 工具参数解析失败："
+                                f"{arg_parse_errors[tc.id]}。"
+                                "请重新生成合法的 JSON 参数后重试。"
+                            ),
+                            success=False,
+                        )
+                    else:
+                        result = await self.tools.execute(tc)
+                    if self._config_stream and self._stream_events is not None:
+                        self._emit_stream_event(
+                            self._stream_events.on_tool_end, tc.name, result.success
+                        )
                     raw_content = result.content
                     result_content = raw_content
 
@@ -983,9 +1061,7 @@ class Agent:
                         },
                     )
                     try:
-                        response = await self.llm.chat(
-                            messages=fatal_messages, tools=None,
-                        )
+                        response = await self._chat_llm(fatal_messages, None)
                         final_content = response.get("content", "") or ""
                         trace_step.add_event(
                             "llm_response",
@@ -1027,6 +1103,16 @@ class Agent:
             # 达到最大对话轮数限制
             self._finalize_run("failed")
             return "Agent 已达到最大对话轮数限制。"
+        except Exception as exc:
+            # TD-020 评审 O2：流式中途断连时在当前 step 标注 partial——
+            # 已渲染的分片内容保留在终端（不可收回），CLI 在异常分支渲染
+            # 错误尾部；Trace 侧据此区分"完整失败"与"部分输出后中断"。
+            if self._config_stream and trace_step is not None:
+                trace_step.add_event(
+                    "stream_partial",
+                    {"error": f"{type(exc).__name__}: {exc}"},
+                )
+            raise
         finally:
             # Phase 8：运行结束时提取并持久化记忆
             if self.memory_manager is not None and trace_step is not None:

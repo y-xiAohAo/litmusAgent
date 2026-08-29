@@ -108,6 +108,7 @@ def _create_agent() -> Agent:
             base_url=os.environ.get("OPENAI_BASE_URL") or config.llm.base_url,
             temperature=config.llm.temperature,
             max_tokens=config.llm.max_tokens,
+            thinking=config.llm.thinking,
         )
     else:
         llm_client = EchoClient()

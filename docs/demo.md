@@ -29,7 +29,7 @@ python examples/demo_real_llm.py --model gpt-4o-mini
 python examples/demo_real_llm.py \
   --api-key "sk-..." \
   --base-url "https://api.deepseek.com/v1" \
-  --model "deepseek-chat"
+  --model "deepseek-v4-flash"
 
 # 加载自定义配置
 python examples/demo_real_llm.py --config examples/config.yaml
