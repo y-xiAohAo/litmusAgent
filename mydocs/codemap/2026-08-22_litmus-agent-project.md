@@ -165,7 +165,7 @@ sequenceDiagram
 
 ## 7. Spec 与技术债资产（mydocs/specs/，25 份）
 
-- **项目级**：project-rebaseline（07-17）、resume-pipeline-framework-vision、project-star-finalization
+- **项目级**：project-rebaseline（07-17）等早期立项记录（部分已归档出库）
 - **技术债 TD-002~013**：subprocess-backend✅、execution-context-injection、runtime-services✅、human-approval✅、workspace-write-boundary、image-registry、test-env-isolation(TD-011/012)、llm-memory-extractor(TD-013)✅
 - **功能**：real-llm-e2e-suite、auto-planner、showcase-narrative-tests、memory-layered-retrieval、memory-search-tool、query-expansion-memory、memory-sql-redis
 - **评测**：batch-e2e-benchmark-seed + benchmark + batch2~6

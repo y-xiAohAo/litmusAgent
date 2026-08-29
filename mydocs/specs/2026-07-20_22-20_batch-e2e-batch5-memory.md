@@ -4,7 +4,7 @@
 - **创建时间**: 2026-07-20 22:20
 - **当前 Phase**: EXECUTE（试点阶段）
 - **Approval Status**: `APPROVED — 2026-07-20 用户批准 Plan`
-- **关联**: 简历正式稿 v2 §5（记忆 bullet 缺量化数字）；Batch 4（采样与判分模式基座）
+- **关联**: Batch 4（采样与判分模式基座）；记忆机制尚缺批量级量化数字
 
 ## 0. Open Questions
 
@@ -12,12 +12,12 @@
 
 ## 1. Requirements (Context)
 
-- **Goal**: 为简历"长期记忆"bullet 产出批量级量化数字：跨会话记忆召回在 记忆开/关 两臂下的对照（召回率、搜索模式、冲突更新），替代已删除的小样本 0/2→2/2。
+- **Goal**: 为长期记忆机制产出批量级量化数字：跨会话记忆召回在 记忆开/关 两臂下的对照（召回率、搜索模式、冲突更新），替代已删除的小样本 0/2→2/2。
 - **In-Scope**:
   1. 任务集 b5（T81-T100，20 个两阶段任务）：跨会话召回 8 + 干扰召回 6 + 冲突更新 3 + 搜索模式 3。
   2. Runner 支持两阶段任务（phase A 教学 → 新会话 phase B 查询，共享 memory_root）与 `mem`/`no-mem` 臂；新增 `expected_in_answer` 判分模式（答案包含关键事实）。
   3. 试点 2 runs → 全批 80 runs（20 × 2 臂 × 2 采样）。
-  4. 报告 + evaluation-log + 简历记忆 bullet 升级（R3 流程）。
+  4. 报告 + evaluation-log + 结论口径升级。
 - **Out-of-Scope**:
   - 记忆机制的第三臂变体（planner/反思组合）；本轮只测记忆开关。
   - LLM 提取型记忆（`llm_extraction_enabled`）专项；本轮用默认提取管线。
@@ -31,7 +31,7 @@
 
 ## 1.7 Minimum Chaos Unit Assessment
 
-- Final Goal: 记忆开/关两臂召回率对照报告（80 runs），简历记忆 bullet 获得批量级数字
+- Final Goal: 记忆开/关两臂召回率对照报告（80 runs），记忆机制获得批量级数字
 - Current Task Unit: b5 任务集 + Runner 两阶段/判分扩展 + 分阶段执行
 - Why small enough: two_phase 模式在 e2e_suite 已验证；判分新增仅一个 expected_in_answer 分支
 - Verification Evidence: 门禁全绿；echo 冒烟；试点验证 phase A 记忆真实写入、phase B 两臂表现分叉
@@ -72,7 +72,7 @@
 - `tests/test_batch_e2e.py`（修改）：b5 完整性 + 两阶段执行 mock 测试 + expected_in_answer 判分测试
 - `docs/batch-e2e-batch5-report.md`（新增）
 - `docs/evaluation-log.md`（修改）
-- `mydocs/resume/litmus-agent-resume.md`（记忆 bullet 升级，R3 批准后）
+- 结论口径文档（记忆机制批量数字，批准后更新）
 
 ### 4.2 Signatures
 
@@ -106,7 +106,7 @@ if task.prompt_b:
 - [ ] 4. **试点**：`--only T81,T98 --arms mem,no-mem`（4 runs）→ 验证 phase A 写入、两臂分叉、搜索工具断言
 - [ ] 5. **全批**：80 runs 串行后台（预计 60-100 分钟）
 - [ ] 6. 聚合报告 → `docs/batch-e2e-batch5-report.md` + evaluation-log + 成本
-- [ ] 7. 回写本 Spec §5/§6/§7；简历记忆 bullet 升级提案（R3 流程待用户批准）
+- [ ] 7. 回写本 Spec §5/§6/§7；结论口径升级提案（待用户批准）
 
 ### 4.4 Route Alignment (Water Flow Check)
 
@@ -124,7 +124,7 @@ if task.prompt_b:
 - [x] Step 4b: 判分修正两处：① T98 工具断言误杀（小记忆库注入通道足够，memory_search 非必经）→ 去掉 T98-100 expected_tools；② T86 空格差异误判 → expected_in_answer 改空白不敏感比较（+2 测试锁定）
 - [x] Step 5: 全批 80 runs（约 75 分钟）：**mem 40/40（100%）vs no-mem 0/40（0%）**——完美对照，无测量泄漏；mem 臂工具序列可见 memory_search 自然使用
 - [x] Step 6: 报告落盘 `docs/batch-e2e-batch5-report.md`；evaluation-log 追加；基线 723→732；session-context 同步；总耗 **约 64.5 万 tokens**
-- [ ] Step 7: 简历记忆 bullet 升级（R3 提案待用户批准）；本 Spec §6/§7 回写
+- [ ] Step 7: 结论口径升级（提案待用户批准）；本 Spec §6/§7 回写
 
 ## 6. Review Verdict
 
@@ -138,7 +138,7 @@ if task.prompt_b:
 - Blocking Issues: 无
 - Regression risk: Low（src 零改动）
 - Follow-ups:
-  1. 简历记忆 bullet 升级（R3）："跨会话召回对照 100% vs 0%（80 次运行）"
+  1. 结论口径升级："跨会话召回对照 100% vs 0%（80 次运行）"
   2. **产品改进候选**：`llm_extraction_enabled` 有开关无实现——纯对话事实提取器，单独立项
   3. Batch 6 候选：大记忆库（50+ 事实）压力测试，验证 memory_search 在超注入预算时的必要性
 

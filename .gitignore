@@ -80,5 +80,12 @@ temp/
 # Phase 7 context cache
 .hermes/
 
-# Local process docs（2026-08-04 用户明确要求入库：spec/简历/归档全量纳入版本管理）
+# Local process docs (kept in version control per project convention)
 # mydocs/
+
+# personal notes (never commit)
+mydocs/resume/
+mydocs/*resume*
+mydocs/jd-keyword-analysis.md
+mydocs/star-material.md
+mydocs/learning-journal.md

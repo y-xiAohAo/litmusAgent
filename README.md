@@ -1,65 +1,71 @@
 # Litmus Agent
 
-> 具备自我纠错能力的代码沙箱 Agent：让 LLM 写代码、在隔离沙箱中执行、观察结果、修正并交付产物。
+[English](README.md) | [中文](README.zh-CN.md)
 
-Litmus Agent 是一个面向代码生成与执行的 LLM Agent 框架。它把"计划 → 写代码 → 运行 → 观察 → 修正"的循环封装成可配置、可观测、可安全的系统，让 LLM 不仅能生成代码，还能真正跑起来、看到结果、自己修 bug。
+[![CI](https://github.com/y-xiAohAo/litmusAgent/actions/workflows/ci.yml/badge.svg)](https://github.com/y-xiAohAo/litmusAgent/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-## 核心特性
+> A self-correcting code-sandbox agent: let an LLM write code, run it in an isolated sandbox, observe the result, fix it, and deliver.
 
-- **代码沙箱执行**：通过 `sandbox_exec` tool 在 Docker 容器中安全运行 LLM 生成的 Python 代码，失败时把错误返回给 LLM 自我修正。
-- **完整工具集**：默认层含 `sandbox_exec` / `grep` / `glob` / `file_read` / `file_write` / `file_edit` / `file_list` / `finish`，覆盖执行、搜索与文件读写闭环。
-- **自我纠错循环**：Agent 主循环持续调用 LLM，直到代码成功运行或达到最大轮数。
-- **交互式 CLI**：支持 `agent run` 单次运行与 `agent chat` 多轮对话，内置 Rich 美化输出。
-- **配置驱动**：通过 YAML 配置文件管理 LLM 模型、沙箱参数、工具集、安全策略与长期记忆。
-- **持久工作区**：三种工作区模式——默认随机卷（用完清理）、`volume_name` 命名卷（`litmus-ws-<name>` 跨会话保留）、`host_dir` bind 挂载宿主项目目录（git 强制快照 + 写确认默认开 + 敏感文件 read deny）。
-- **沙箱网络策略**：`network_mode` 配置化（默认 `none` 禁网），`allow_setup_network` 仅对 pip 安装意图的执行放行有网临时容器。
-- **MCP 工具接入**：声明式接入任意 MCP server（stdio / SSE / HTTP 三种传输），发现的工具以 `mcp__<server>__<tool>` 注册进统一卡口（策略 / 人工确认 / Trace），CLI/Web 场景默认逐次人工确认、`trust` 可豁免（可选依赖 `pip install "agent[mcp]"`）。
-- **长期记忆**：跨任务保留环境状态、用户偏好与失败模式（默认关闭，不破坏原有行为）。
-- **安全策略引擎**：可配置地拦截高危代码、文件路径操作与记忆读写。
-- **批量评测体系**：125 任务 6 批次（b1-b4 各 20 + b5 22 + b6 23，难度递进）+ 断言/LLM-judge/工具路径三重判分 + 三机制臂对照 + 重复采样 + token 成本可核算（`examples/batch_e2e.py` + `examples/batch_tasks*.py`）；QE 全量回归 44/46（96%，基线 92%）。
+Litmus Agent is an LLM agent framework for code generation and execution. It wraps the "plan → write code → run → observe → fix" loop into a configurable, observable, and safe system — so the LLM doesn't just generate code, it actually runs it, sees the output, and fixes its own bugs.
 
-## 前置条件
+## Features
 
-- Python >= 3.10（推荐 3.11）
-- Docker Desktop 或 Docker Engine（用于代码沙箱；如果仅看示例，可用 `--echo` 模式跳过真实执行）
-- OpenAI API key（可选，示例使用 `--echo` 模式无需 key）
+- **Sandboxed code execution**: run LLM-generated Python safely in Docker containers via the `sandbox_exec` tool; failures are fed back to the LLM for self-correction.
+- **Full tool set**: the default layer ships `sandbox_exec` / `grep` / `glob` / `file_read` / `file_write` / `file_edit` / `file_list` / `finish` — a closed loop of execution, search, and file I/O.
+- **Self-correction loop**: the agent main loop keeps calling the LLM until the code runs successfully or the turn budget is exhausted.
+- **Interactive CLI**: `agent run` for one-shot tasks and `agent chat` for multi-turn sessions, with Rich-powered output.
+- **Configuration-driven**: manage LLM model, sandbox parameters, tool sets, security policies, and long-term memory through a YAML config file.
+- **Persistent workspaces**: three workspace modes — ephemeral random volumes (cleaned up after use), named volumes (`litmus-ws-<name>`, preserved across sessions), and `host_dir` bind mounts of a host project directory (mandatory git snapshot + write confirmation on by default + read-deny for sensitive files).
+- **Sandbox network policy**: configurable `network_mode` (`none` by default); `allow_setup_network` grants a temporary networked container only for pip-install execution intents.
+- **MCP tool integration**: declaratively attach any MCP server (stdio / SSE / HTTP transports); discovered tools are registered as `mcp__<server>__<tool>` behind the unified gatekeeper (policy / human approval / trace). CLI/Web scenarios require per-call human approval by default, with `trust` as an opt-out (optional dependency: `pip install "agent[mcp]"`).
+- **Long-term memory**: retain environment state, user preferences, and failure patterns across tasks (off by default; no behavior change when disabled).
+- **Security policy engine**: configurable interception of high-risk code, file-path operations, and memory reads/writes.
+- **Batch evaluation suite**: 125 tasks across 6 batches (b1–b4: 20 each, b5: 22, b6: 23, progressive difficulty) with triple scoring (assertions / LLM-judge / tool-path), mechanism ablation arms, repeated sampling, and token-cost accounting (`examples/batch_e2e.py` + `examples/batch_tasks*.py`); query-expansion regression 44/46 (96%, baseline 92%).
 
-## 安装
+## Prerequisites
+
+- Python >= 3.10 (3.11 recommended)
+- Docker Desktop or Docker Engine (for the code sandbox; use `--echo` mode to explore examples without real execution)
+- OpenAI API key (optional; `--echo` examples need no key)
+
+## Installation
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/y-xiAohAo/litmusAgent.git
 cd litmusAgent
 pip install -e ".[dev]"
 ```
 
-安装完成后，`agent` 命令即可使用：
+The `agent` command is then available:
 
 ```bash
 agent --version
 ```
 
-## 快速开始
+## Quick Start
 
-### CLI 方式
+### CLI
 
-无需 API key，使用 `EchoClient` 体验 CLI：
+Try the CLI with the `EchoClient` — no API key required:
 
 ```bash
-# 单次运行
-agent run "帮我写一个快速排序算法" --echo
+# One-shot run
+agent run "write a quicksort algorithm for me" --echo
 
-# 交互模式
+# Interactive mode
 agent chat --echo
 ```
 
-接入真实 LLM（需设置 `OPENAI_API_KEY`）：
+Connect a real LLM (requires `OPENAI_API_KEY`):
 
 ```bash
 export OPENAI_API_KEY="sk-..."
-agent run "帮我写一个快速排序算法"
+agent run "write a quicksort algorithm for me"
 ```
 
-### Python 代码方式
+### Python API
 
 ```python
 import asyncio
@@ -70,7 +76,7 @@ from agent.llm import EchoClient
 
 async def main() -> None:
     agent = Agent(llm_client=EchoClient())
-    response = await agent.run("帮我写一个快速排序算法")
+    response = await agent.run("write a quicksort algorithm for me")
     print(response)
 
 
@@ -78,76 +84,76 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-更多示例见 [`examples/`](examples/)。
+More examples in [`examples/`](examples/).
 
-## Docker 一键启动
+## Docker Quickstart
 
-如果你希望在容器内运行 Litmus Agent，可以使用项目提供的 Docker Compose 配置：
+To run Litmus Agent inside a container, use the provided Docker Compose setup:
 
 ```bash
-# 检查 Docker 环境并拉取默认沙箱镜像
+# Check the Docker environment and pull the default sandbox image
 python scripts/setup-docker.py
 
-# 启动容器（会自动安装项目依赖）
+# Start the container (project dependencies are installed automatically)
 docker compose up -d
 
-# 在容器内运行示例
-docker compose exec hermes agent run "帮我写一个快速排序算法" --echo
+# Run an example inside the container
+docker compose exec hermes agent run "write a quicksort algorithm for me" --echo
 ```
 
-> Windows 用户可能需要根据 Docker Desktop 后端调整 `docker-compose.yml` 中的 Docker socket 挂载路径。
+> On Windows, you may need to adjust the Docker socket mount path in `docker-compose.yml` depending on your Docker Desktop backend.
 
-## 项目结构
+## Project Structure
 
 ```
 litmusAgent/
-├── src/agent/              # 核心源码
-│   ├── cli/                # CLI 实现（agent run / agent chat / agent config）
-│   ├── config.py           # YAML 配置系统
-│   ├── core/               # Agent 引擎、状态、Trace、错误处理、安全策略
-│   ├── llm/                # LLM 客户端（OpenAI 兼容 + EchoClient）
-│   ├── sandbox/            # Docker 沙箱后端
-│   └── tools/              # Tool 实现（sandbox_exec / grep / glob / file_read / file_write / file_edit / file_list / finish）
-├── examples/               # 可运行示例（含 batch_e2e.py 批量评测体系）
-├── scripts/                # 工具脚本（setup.sh / setup-docker.py / hermes-memory.py）
-├── docker-compose.yml      # Docker Compose 运行配置
-├── tests/                  # 测试集
-├── docs/                   # 文档
-├── Makefile                # 常用命令封装
-├── pyproject.toml          # 包配置与工具链
-└── README.md               # 本文件
+├── src/agent/              # Core source code
+│   ├── cli/                # CLI implementation (agent run / agent chat / agent config)
+│   ├── config.py           # YAML configuration system
+│   ├── core/               # Agent engine, state, trace, error handling, security policy
+│   ├── llm/                # LLM clients (OpenAI-compatible + EchoClient)
+│   ├── sandbox/            # Docker sandbox backend
+│   └── tools/              # Tool implementations (sandbox_exec / grep / glob / file_read / file_write / file_edit / file_list / finish)
+├── examples/               # Runnable examples (incl. batch_e2e.py evaluation suite)
+├── scripts/                # Utility scripts (setup.sh / setup-docker.py / hermes-memory.py)
+├── docker-compose.yml      # Docker Compose configuration
+├── tests/                  # Test suite
+├── docs/                   # Documentation
+├── Makefile                # Common command shortcuts
+├── pyproject.toml          # Package config and toolchain
+└── README.md               # This file
 ```
 
-## 开发
+## Development
 
 ```bash
-# 运行测试
+# Run tests
 make test
 
-# 类型检查
+# Type check
 make check
 
-# 代码检查
+# Lint
 make lint
 
-# 格式化
+# Format
 make format
 
-# 一键跑 CI 三门禁
+# Run all three CI gates
 make ci
 ```
 
-质量门禁：
+Quality gates:
 
 ```bash
-pytest tests/ -q        # 测试
-mypy src/               # 类型检查
+pytest tests/ -q        # Tests
+mypy src/               # Type checking
 ruff check src/ tests/  # Lint
 ```
 
-## 配置示例
+## Configuration
 
-通过 YAML 配置文件自定义 Agent 行为：
+Customize agent behavior with a YAML config file:
 
 ```yaml
 llm:
@@ -156,7 +162,7 @@ llm:
 
 agent:
   max_turns: 10
-  system_prompt: "你是一名耐心的 Python 助教。"
+  system_prompt: "You are a patient Python teaching assistant."
 
 sandbox:
   backend: docker
@@ -167,21 +173,21 @@ tools:
     - sandbox_exec
     - finish
 
-# 可选：接入 MCP server 的工具（需 pip install "agent[mcp]"）
+# Optional: attach tools from MCP servers (requires pip install "agent[mcp]")
 mcp:
   servers:
     - name: filesystem
       command: npx
       args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-      trust: false   # false=每次调用前人工确认
+      trust: false   # false = human approval before every call
 ```
 
-使用配置运行：
+Run with a config file:
 
 ```bash
-agent run "帮我写一个排序算法" --config examples/config.yaml --echo
+agent run "write a sorting algorithm" --config examples/config.yaml --echo
 ```
 
-## 许可证
+## License
 
 MIT

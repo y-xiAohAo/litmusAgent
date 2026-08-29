@@ -20,7 +20,6 @@
 - 契约套件 22 项全绿；真实 MySQL/Redis 容器集成验收通过（非 mock）
 - b6 子集 mem-sql 臂端到端双 PASS（全 Agent 链路在 SQL 后端正确）
 - 门禁：786 passed / mypy 48 / ruff 全绿；依赖 sqlalchemy/redis/pymysql/cryptography 双文件同步
-- 简历已并入"存储与缓存工程"bullet（v3.5）
 
 ## 面试叙事口径
 

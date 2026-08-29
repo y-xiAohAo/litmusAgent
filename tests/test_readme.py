@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 README_PATH = Path(__file__).parent.parent / "README.md"
+README_ZH_PATH = Path(__file__).parent.parent / "README.zh-CN.md"
 
 
 @pytest.fixture
@@ -24,8 +25,32 @@ def readme_content() -> str:
     return README_PATH.read_text(encoding="utf-8")
 
 
+@pytest.fixture
+def readme_zh_content() -> str:
+    """读取 README.zh-CN.md 内容。"""
+    assert README_ZH_PATH.exists(), "README.zh-CN.md 不存在"
+    return README_ZH_PATH.read_text(encoding="utf-8")
+
+
 class TestReadmeStructure:
     """测试 README 结构完整性。"""
+
+    @pytest.mark.parametrize(
+        "section",
+        [
+            "Features",
+            "Prerequisites",
+            "Installation",
+            "Quick Start",
+            "Project Structure",
+            "Development",
+            "License",
+        ],
+    )
+    def test_key_sections_exist(self, readme_content: str, section: str) -> None:
+        """英文 README 必须包含关键章节标题。"""
+        pattern = re.compile(rf"^##\s+{re.escape(section)}", re.MULTILINE)
+        assert pattern.search(readme_content), f"缺少章节：{section}"
 
     @pytest.mark.parametrize(
         "section",
@@ -39,10 +64,15 @@ class TestReadmeStructure:
             "许可证",
         ],
     )
-    def test_key_sections_exist(self, readme_content: str, section: str) -> None:
-        """README 必须包含关键章节标题。"""
+    def test_zh_key_sections_exist(self, readme_zh_content: str, section: str) -> None:
+        """中文 README 必须包含关键章节标题。"""
         pattern = re.compile(rf"^##\s+{re.escape(section)}", re.MULTILINE)
-        assert pattern.search(readme_content), f"缺少章节：{section}"
+        assert pattern.search(readme_zh_content), f"缺少章节：{section}"
+
+    def test_language_switch_links(self, readme_content: str, readme_zh_content: str) -> None:
+        """双语 README 必须互相提供语言切换链接。"""
+        assert "README.zh-CN.md" in readme_content
+        assert "README.md" in readme_zh_content
 
 
 class TestReadmeCodeBlocks:

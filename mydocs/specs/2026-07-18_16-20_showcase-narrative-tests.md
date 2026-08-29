@@ -9,7 +9,7 @@
 
 ## 0. 任务复述
 
-- **目标**：为三个差异化模块建真实 LLM 叙事测试，数据全部落盘，服务简历亮点。
+- **目标**：为三个差异化模块建真实 LLM 叙事测试，数据全部落盘，沉淀差异化模块的效果证据。
 - **场景**：
   - **S6-M1 记忆叙事**：Session A 创建 `/workspace/notes.md`（内容含代号）→ 新 Agent 实例（同 memory_root）→ Session B 问"我之前创建过什么文件"。证据：B 答案含 notes.md；A trace 含 `memory_recorded`。
   - **S7-C1 压缩叙事**：小 context_window（600/预留 100）强制快速压缩 → 第 1 轮告知幸运数字 → 多轮大输出填充 → 末轮提问。证据：trace 含 `context_compression` 事件；答案含幸运数字（首条 user 消息受 protect_first_n 保护）。

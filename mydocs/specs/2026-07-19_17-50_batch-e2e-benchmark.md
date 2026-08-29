@@ -4,7 +4,7 @@
 - **创建时间**: 2026-07-19 17:50
 - **当前 Phase**: EXECUTE（全批运行中）
 - **Approval Status**: `APPROVED — 2026-07-19 用户批准 Plan（含三项待决项：先 20 再扩 50 / 断言+judge 混合 / 不设硬顶分批报告）`
-- **关联**: seed `2026-07-19_batch-e2e-benchmark-seed.md`；数据红线继承自 `2026-07-19_01-50_project-star-finalization.md`
+- **关联**: seed `2026-07-19_batch-e2e-benchmark-seed.md`；数据红线：一切对外数字必须 100% 可溯源到评测记录
 
 ## 0. Open Questions
 
@@ -12,7 +12,7 @@
 
 ## 1. Requirements (Context)
 
-- **Goal**: 建立可重复运行的批量评测体系，用 20 任务 × 2 机制臂的真实 LLM 运行产出统计强度足够的聚合指标（成功率/轮数/无效调用率/失败分类/token 成本），为简历数字升级提供证据。
+- **Goal**: 建立可重复运行的批量评测体系，用 20 任务 × 2 机制臂的真实 LLM 运行产出统计强度足够的聚合指标（成功率/轮数/无效调用率/失败分类/token 成本），为机制效果提供统计证据。
 - **In-Scope**:
   1. `OpenAIClient` 增加 token 用量累计（`usage_totals`）。
   2. 20 个批量任务（16 断言 + 4 LLM-judge），覆盖 算法5 / 文件处理5 / 数据分析3 / 多步链路3 / 开放报告4，难度 L1-L3。
@@ -20,7 +20,7 @@
   4. echo 冒烟 + 2 任务真实试点 + 全批 40 次运行。
   5. 聚合报告（公开 `docs/`）+ evaluation-log 条目 + 实际成本报告。
 - **Out-of-Scope**:
-  - 简历措辞修改（报告评审后单独打磨，走 R3 流程）。
+  - 对外口径措辞修改（报告评审后单独打磨）。
   - planner-off 臂、50 任务扩容、重复采样（Batch 2 候选）。
   - 改编公开 benchmark。
   - 并发执行（串行为主，规避 Docker 与 API 限流风险）。
@@ -35,7 +35,7 @@
 
 ## 1.1 Context Sources
 
-- Requirement Source: seed spec 动机（小样本数字守得住但不硬；JD 要求 benchmark 构建能力）
+- Requirement Source: seed spec 动机（小样本数字守得住但不硬；需要 benchmark 构建能力的实证）
 - Existing Infra: `examples/e2e_suite.py`（Scenario/evidence/report 模式）、TD-001 workspace 持久性、`docs/evaluation-log.md` 报告格式
 - Code Refs: `src/agent/llm/client.py:126-201`（usage 解析点）、`src/agent/core/engine.py:315,387`（reflective_advisor 注入点）、`src/agent/core/reflective_advisor.py:171-189`（threshold 构造）
 
@@ -49,7 +49,7 @@
 
 ## 1.7 Minimum Chaos Unit Assessment
 
-- Final Goal: Batch 1 聚合报告 + 真实成本数据，供简历升级评审
+- Final Goal: Batch 1 聚合报告 + 真实成本数据，供评审
 - Current Task Unit: usage_totals 小改动 + 任务集 + Runner + 三阶段执行（冒烟/试点/全批）
 - Why small enough: 唯一 src 改动是 3 行累加；其余均为 examples/tests 新增；执行分三阶段，每阶段有独立 GO/NO-GO 证据
 - Verification Evidence: 门禁三件套全绿；echo 冒烟通过；试点 2 run 判分链路完整；全批报告生成且成本可报
@@ -80,7 +80,7 @@
 - B. 更强模型做 judge：本批无可用第二 provider，Batch 2 再议
 
 ### Fork 3: 机制臂数量
-- A. **Batch 1 两臂（full / no-reflect）40 runs** → 选 A：对照简历现有反思 A/B 声称
+- A. **Batch 1 两臂（full / no-reflect）40 runs** → 选 A：对照现有反思 A/B 声称
 - B. 2×2 全因子 80 runs：留 Batch 2
 
 ## 4. Plan (Contract)
@@ -154,7 +154,7 @@ def render_report(results: list[BatchRunResult]) -> str: ...  # 聚合：分臂�
 - [ ] 5. **试点**：`--only T01,T11 --arms full`（2 次真实运行）→ 验证 判分脚本入沙箱 / usage 捕获 / judge 链路；报告实际 token 数
 - [ ] 6. **全批**：20 × 2 臂串行后台执行（预计 40-80 分钟），原始结果落 `mydocs/reports/batch1_raw.jsonl`，单 run 失败重试 1 次
 - [ ] 7. 聚合报告 → `docs/batch-e2e-batch1-report.md` + `docs/evaluation-log.md` 条目 + 实际总成本向用户报告
-- [ ] 8. 回写本 Spec §5/§6/§7；简历升级另起 R3 打磨（用户评审报告后）
+- [ ] 8. 回写本 Spec §5/§6/§7；对外口径另起打磨（用户评审报告后）
 
 ### 4.4 Spec Review Notes
 
@@ -193,7 +193,7 @@ def render_report(results: list[BatchRunResult]) -> str: ...  # 聚合：分臂�
 - Regression risk: Low（src 改动 additive；全量测试 678→696 全绿）
 - Follow-ups:
   1. **Batch 2 立项候选**：提高任务难度（当前任务集对 deepseek-chat 偏易，双臂 100% 无判别力）、planner-off 臂、50 任务扩容、重复采样
-  2. 简历数字升级（R3 打磨）：Batch 1 可用口径为"20 任务批量评测双臂 100% 通过、平均 4.1 轮、自动判分（断言+LLM-judge）、单次评测成本 247k tokens"；**判别性数字（机制对照差异）需等 Batch 2**
+  2. 结论口径（待打磨）：Batch 1 可用口径为"20 任务批量评测双臂 100% 通过、平均 4.1 轮、自动判分（断言+LLM-judge）、单次评测成本 247k tokens"；**判别性数字（机制对照差异）需等 Batch 2**
   3. 弱信号仅记录不声称：no-reflect 臂轮数 +0.4 / token +8.7%
 
 ## 7. Plan-Execution Diff

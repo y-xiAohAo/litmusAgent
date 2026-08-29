@@ -150,7 +150,7 @@ async def _expand_and_retrieve(self, text: str, limit: int) -> list[MemoryEntry]
 - Blocking Issues: 无
 - Regression risk: Low（默认关闭；存量行为有测试锁定）
 - Follow-ups:
-  1. 简历口径可补：查询扩展修复硬 paraphrase（T122 复活，qe 8/8 vs 5/8）
+  1. 结论口径可补：查询扩展修复硬 paraphrase（T122 复活，qe 8/8 vs 5/8）
   2. Batch 7 候选：QE 全量复跑 b6（验证无回归）/ 200+ 条压力 / LLM 提取质量审计
   3. QE 变体质量抽查（prompt 迭代空间）
 

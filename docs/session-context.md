@@ -8,7 +8,7 @@
 - **质量门禁**：`pytest tests/` + `mypy src/` + `ruff check src/ tests/` 全绿
 - **测试基线**：786 passed，1 skipped（跳过项为 tiktoken 未安装）
 - **Git 状态**：`master` 分支，有未提交修改（评测日志体系）
-- **当前任务**：记忆存储升级完成（SQL 后端契约双后端 22 项全绿 + Redis 缓存 generation 失效；真实 MySQL/Redis 容器验收 + b6 子集 mem-sql 端到端 PASS）；下一步候选：简历"存储与缓存工程"bullet 并入（R3）、Batch 7（T73 显著性/提取审计）、TD-010、TD-014（代码搜索工具）
+- **当前任务**：记忆存储升级完成（SQL 后端契约双后端 22 项全绿 + Redis 缓存 generation 失效；真实 MySQL/Redis 容器验收 + b6 子集 mem-sql 端到端 PASS）；下一步候选：Batch 7（T73 显著性/提取审计）、TD-010、TD-014（代码搜索工具）
 - **当前规格**：`mydocs/specs/2026-08-04_09-30_memory-sql-redis.md`（SDD-RIPER-ONE）
 
 ---

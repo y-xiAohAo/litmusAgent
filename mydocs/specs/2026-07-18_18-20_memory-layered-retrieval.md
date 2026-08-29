@@ -10,7 +10,7 @@
 
 ## 0. 任务复述（Restate First）
 
-- **最终目标**：修复记忆系统"存得住、取不出"的核心缺陷——中文自然语言查询下记忆召回率从 ~0 提升至可用水平，并形成可量化简历证据。
+- **最终目标**：修复记忆系统"存得住、取不出"的核心缺陷——中文自然语言查询下记忆召回率从 ~0 提升至可用水平，并形成可量化的效果证据。
 - **当前任务单元**：L0 recency 兜底 + L2 条件 LLM 语义重排 + artifact 内容快照（用户拍板全范围）。
 - **In Scope**：`MemoryManager` 检索链改造、`StructuredMemoryStore.list_recent`、`RuleMemoryExtractor` 内容快照、配置扩展、测试、真实 LLM 复验（S6 场景）。
 - **Out of Scope**：向量数据库/embedding；LLM 全量重排（不做，条件触发）；artifact 全量内容存储（只做截断快照）；记忆写入查重。

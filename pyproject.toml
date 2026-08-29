@@ -12,7 +12,21 @@ license = {text = "MIT"}
 authors = [
     {name = "Your Name"},
 ]
-keywords = ["llm", "agent", "ai", "tool-use", "sandbox", "code-execution"]
+keywords = ["llm", "agents", "ai", "tool-use", "sandbox", "code-execution", "mcp"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Libraries",
+]
+
+[project.urls]
+Homepage = "https://github.com/y-xiAohAo/litmusAgent"
+Repository = "https://github.com/y-xiAohAo/litmusAgent"
+Issues = "https://github.com/y-xiAohAo/litmusAgent/issues"
 
 dependencies = [
     "httpx>=0.27.0",

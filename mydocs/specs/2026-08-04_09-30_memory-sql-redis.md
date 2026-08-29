@@ -57,7 +57,7 @@
 
 | 选项 | 结论 |
 |---|---|
-| **SQLAlchemy Core**（新增 1 依赖） | **选用**：一套代码双数据库（SQLite 测试 / MySQL 验证），方言问题由它吸收；业界标准，简历叙事最强 |
+| **SQLAlchemy Core**（新增 1 依赖） | **选用**：一套代码双数据库（SQLite 测试 / MySQL 验证），方言问题由它吸收；业界标准，工程叙事最完整 |
 | sqlite3 裸写 | 排除：MySQL 故事弱，方言手写痛苦 |
 | pymysql 裸写 | 排除：测试依赖 MySQL 容器，不密闭 |
 
@@ -184,7 +184,7 @@ def _bump_cache_generation(self) -> None:
 - Blocking Issues: 无
 - Regression risk: Low（默认 jsonl + 无缓存，存量 786 测试锁定）
 - Follow-ups:
-  1. 简历"存储与缓存工程"bullet 并入（R3 流程，文案已在讨论中定稿）
+  1. "存储与缓存工程"结论口径并入（文案已在讨论中定稿）
   2. Batch 7 候选：T73 显著性 / LLM 提取质量审计 / 200+ 条压力
   3. CI 容器化验收（GitHub Actions services: mysql/redis）——可选加固
 

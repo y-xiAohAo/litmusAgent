@@ -136,7 +136,7 @@ def seed_memory(root: Path, task: BatchTask) -> None:
 - Regression risk: Low（src 零改动）
 - Follow-ups:
   1. **查询扩展**（LLM 生成同义搜索词再检索）——直接针对 T122 类失败，可立项（产品改进）
-  2. 简历口径补充：100 条压力检索稳健 + L2 默认关闭有数据支撑（诚实口径）
+  2. 结论口径补充：100 条压力检索稳健 + L2 默认关闭有数据支撑（诚实口径）
   3. 200+ 条 / 90 天深埋压力上限探测
 
 ## 7. Plan-Execution Diff

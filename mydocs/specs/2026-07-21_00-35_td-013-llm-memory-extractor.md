@@ -193,7 +193,7 @@ max_age_days: int | None = None   # 记忆最大保留天数；None = 不清理�
 - Blocking Issues: 无
 - Regression risk: Low（默认关闭；存量行为有测试锁定）
 - Follow-ups:
-  1. 简历口径可补：记忆系统现支持纯对话事实（LLM 提取，PREFERENCES+TASK_SUMMARIES）
+  1. 结论口径可补：记忆系统现支持纯对话事实（LLM 提取，PREFERENCES+TASK_SUMMARIES）
   2. Batch 6 候选：大记忆库压力测试；LLM 提取质量抽查（噪声/误提取审计）
   3. `max_age_days` 默认值留用户按运维需要设定（当前 None）
 
