@@ -223,6 +223,29 @@ class TestSSEParsing:
             "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15,
         }
 
+    async def test_usage_null_middle_chunk_last_non_null_wins(self):
+        """中间 chunk 带 ``"usage": null`` 时应忽略，取末帧完整 usage。
+
+        真实端点实测（DeepSeek v4-flash）：流式中间帧携带 null usage，
+        只有最后一个 chunk 带完整 usage 对象。
+        """
+        client = OpenAIClient(api_key="test")
+        usage_final = {
+            "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15,
+        }
+        lines = [
+            'data: {"choices": [{"delta": {"content": "a"}}], "usage": null}',
+            'data: {"choices": [{"delta": {"content": "b"}}], "usage": null}',
+            _sse_chunk({}, usage=usage_final),
+            "data: [DONE]",
+        ]
+        _patch_stream(client, lines)
+
+        result = await client.chat_stream([{"role": "user", "content": "hi"}])
+
+        assert result["content"] == "ab"
+        assert client.usage_totals == usage_final
+
     async def test_request_body_has_stream_and_thinking(self):
         """流式请求体应带 stream/stream_options；thinking 开启时带 thinking 参数。"""
         client = OpenAIClient(api_key="test", thinking=True)

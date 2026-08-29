@@ -298,7 +298,10 @@ class OpenAIClient(BaseLLMClient):
           - ``data: [DONE]`` 结束；空行跳过；坏 JSON 行 warning 跳过；
           - delta.content / delta.reasoning_content 分片即时回调 events，
             回调异常只记 warning，不中断流（R1）；
-          - delta.tool_calls 按 index 聚合，arguments 字符串拼接。
+          - delta.tool_calls 按 index 聚合，arguments 字符串拼接；
+          - usage 取**最后一个非 null** 的 chunk（真实端点实测：DeepSeek
+            v4-flash 中间 chunk 带 ``"usage": null``，仅末帧携带完整
+            usage；逐帧累加会被 null 帧干扰/重复计数）。
 
         参数：
           progress:      进度标记，收到首个 data chunk 后置 produced=True，
@@ -327,6 +330,9 @@ class OpenAIClient(BaseLLMClient):
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
         tool_acc: dict[int, dict[str, Any]] = {}
+        # 仅保留最后一个非 null 的 usage（中间 chunk 的 null 帧忽略），
+        # 流结束后一次性累加进 usage_totals。
+        last_usage: dict[str, Any] | None = None
 
         async with self._client.stream(
             "POST",
@@ -355,9 +361,8 @@ class OpenAIClient(BaseLLMClient):
                     continue
 
                 usage = chunk.get("usage")
-                if usage:
-                    for key in self.usage_totals:
-                        self.usage_totals[key] += int(usage.get(key, 0) or 0)
+                if usage is not None:
+                    last_usage = usage
 
                 choices = chunk.get("choices") or []
                 if not choices:
@@ -378,6 +383,10 @@ class OpenAIClient(BaseLLMClient):
 
                 for tc in delta.get("tool_calls") or []:
                     self._accumulate_tool_call_chunk(tool_acc, tc)
+
+        if last_usage:
+            for key in self.usage_totals:
+                self.usage_totals[key] += int(last_usage.get(key, 0) or 0)
 
         result: dict[str, Any] = {
             "content": "".join(content_parts),
