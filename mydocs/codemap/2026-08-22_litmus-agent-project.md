@@ -1,7 +1,7 @@
 # CodeMap — Litmus Agent 项目总图（project mode）
 
 > 生成：2026-08-22（SDD-RIPER-ONE `create_codemap`，project 模式，drift-check 后重建）
-> 验证基线：`pytest tests/` = **963 passed, 1 skipped**（2026-08-22 实测，TD-020 流式落地后）；mypy 52 文件零错误；ruff 全绿
+> 验证基线：`pytest tests/` = **973 passed, 1 skipped**（2026-08-22 实测，TD-020 + 真实端点补验后）；mypy 52 文件零错误；ruff 全绿
 > 上一版：`2026-07-17_20-38_hermes-agent-project.md`（41 文件/541 用例，已过期）
 > 用途：代码库索引与上下文切片。后续会话按需按路径回读，不全量扫描。
 

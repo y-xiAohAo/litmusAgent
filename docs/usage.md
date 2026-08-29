@@ -347,6 +347,32 @@ sandbox:
 
 ---
 
+## 流式输出与思考链渲染（TD-020）
+
+默认 LLM 回复在整轮结束后一次性返回。开启流式后，`agent run` / `agent chat`
+的最终回复逐字输出、工具调用显示实时进度行、模型思考链（支持
+`reasoning_content` 的端点，如 DeepSeek V4 思考模式）以弱化样式渲染：
+
+```bash
+agent chat --stream            # 交互模式流式
+agent run "写个快速排序" --stream
+```
+
+```yaml
+llm:
+  stream: true      # 流式输出（默认 false，零回归）
+  thinking: true    # 思考模式（默认 false；仅支持的端点生效）
+```
+
+- 流式只改变"何时看到文字"，不改变 Agent 循环语义：内部仍按完整消息驱动
+  工具调用与策略检查（delta 渲染是旁路，聚合后才进主循环）。
+- 流式中途断连：已输出内容保留，错误尾部呈现，不重试（避免重复输出）；
+  Trace 会标注 `stream_partial`。
+- 端点不支持 `stream_options.include_usage` 时自动降级（该次不计 token）。
+- Python API：`Agent(stream_events=StreamEvents(on_token=..., on_reasoning=...))`。
+
+---
+
 ## 批量评测（Batch E2E）
 
 项目内置批量评测体系，用于在真实 LLM 上量化 Agent 机制效果（规划/反思对照实验）：
