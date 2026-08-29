@@ -27,6 +27,12 @@
 | TD-014 | 代码搜索工具缺失（无 grep/glob 类一等工具） | — | 🟡 低-中 | ✅ 已完成（2026-08-22，grep/glob 双模块 + 策略卡口 + externalizer 预览分支） | ❌ 否 | 1-2 天 |
 | TD-015 | 工作区无法跨会话持久 / 不能维护宿主项目（Coding Agent 形态缺口） | — | 🔴 高 | ✅ 已完成（2026-08-22：单元 B+C 落地，真实 Docker 验证 10/10 通过，Spec：`mydocs/specs/2026-08-22_td-015-persistent-workspace.md`） | ✅ 是 | 3-5 天 |
 | TD-016 | 不支持 MCP 工具接入（工具注册仅内置） | — | 🟠 中 | ✅ 已完成（2026-08-22：三传输 + 惰性装配 + 默认全确认；CR 回炉修装配竞态/私有导入/close 回收；924 passed，Spec：`mydocs/specs/2026-08-22_td-016-mcp-tools.md`） | ⚠️ 间接 | 1-2 天 |
+| TD-017 | `memory_limit_mb` 配置存在但工厂未透传 | — | 🟡 低 | ✅ 已完成（2026-08-29：`__init__` 新增 `mem_limit` + 工厂透传 + 3 例测试；929 passed） | ❌ 否 | 0.1 天 |
+| TD-018 | 容器加固缺 `cap_drop` / `no-new-privileges` | — | 🟡 低-中 | ✅ 已完成（2026-08-29：`cap_drop=ALL`+`cap_add=CHOWN`+`no-new-privileges`，真实 Docker 冒烟通过；929 passed） | ⚠️ 安全加固 | 0.5 天 |
+| TD-019 | MCP server 超时降级后无重连机制 | — | 🟡 低-中 | ⏳ 候选（2026-08-22 登记） | ❌ 否 | 0.5 天 |
+| TD-020 | `OpenAIClient` 无流式输出 | — | 🟡 低 | ⏳ 候选（2026-08-22 登记） | ❌ 否 | 0.5-1 天 |
+| TD-021 | bind 模式缺会话内 `/undo` `/diff` git 交互 | — | 🟡 低 | ⏳ 候选（2026-08-22 登记） | ❌ 否 | 0.5-1 天 |
+| TD-022 | Web UI 无写操作确认面板 | — | 🟡 低 | ⏳ 候选（2026-08-22 登记） | ❌ 否 | 0.5-1 天 |
 
 ---
 
@@ -684,6 +690,40 @@ Batch 5（记忆专项批量评测）试点实证：默认 `RuleMemoryExtractor`
 4. 审批策略升级为双轴：sandbox 配置 × approval policy（参照 Codex `untrusted/on-request/on-failure/never`），bind mount 模式默认不低于 on-request
 5. git 安全网：bind mount 目标是 git 仓库时，默认 agent 改动前快照 commit / 独立分支工作，提供回滚路径（Aider 模式）
 6. 文档化危险面：提供管理员级开关禁用"全自动 + bind mount"组合（参照 Claude Code `disableBypassPermissionsMode`）
+
+---
+
+## 3.5 衍生事项登记（2026-08-22，TD-017~022）
+
+> 来源：TD-010/015/016 实施与 CR 过程的衍生发现。均为小项，进入 Execute 前按需补 Spec（TD-017/018 可走 FAST 通道后回写）。
+
+### TD-017：`memory_limit_mb` 配置存在但工厂未透传
+
+**问题**：`SandboxConfig.memory_limit_mb`（`config.py:301-307`）用户可配置，但 `create_sandbox_backend`（`sandbox/__init__.py:33-90`）不透传，`DockerSandboxBackend.__init__` 的 `mem_limit` 永远是默认值——用户配置被静默忽略。TD-010 调研时发现。**修法**：工厂透传一行 + 测试一例。
+
+**修复记录（2026-08-29，FAST 通道回写）**：`DockerSandboxBackend.__init__` 新增 `mem_limit: str | None = None`（原参数本不存在；docker 风格字符串，None=不限制），`_do_create_container` 以其为默认 `mem_limit`（调用方显式传参优先）；工厂两个 docker 分支（含 bind）透传 `f"{memory_limit_mb}m"`，config 缺省镜像默认值 256。测试：`test_sandbox.py` +2（实例默认生效/显式覆盖）、`test_sandbox_factory.py` +3（透传/默认/bind 分支）。`docs/configuration.md` 字段说明同步。全量 929 passed / 1 skipped，mypy/ruff 全绿。
+
+### TD-018：容器加固缺 `cap_drop` / `no-new-privileges`
+
+**问题**：容器加固现状为 non-root + read_only + tmpfs + seccomp（可选），但没有 `--cap-drop ALL` 和 `security_opt: no-new-privileges`（TD-010 CR 🟡-3 登记）。行业标准加固件。**修法**：`_do_create_container` 的 create_kwargs 加 `cap_drop=["ALL"]`、`security_opt` 追加 `no-new-privileges`；验证既有测试不碎（mock 断言需同步）；真实 Docker 冒烟一次。
+
+**修复记录（2026-08-29，FAST 通道回写）**：create_kwargs 加 `cap_drop=["ALL"]` + `security_opt=["no-new-privileges"]`（seccomp 走 setdefault 追加，合并非覆盖）。**实测发现的交互**：`cap_drop=ALL` 使 EVAL-010 的 root exec `chown /workspace` 因缺 CAP_CHOWN 报 EPERM（volume 模式下 workspace 将不可写）——故回加 `cap_add=["CHOWN"]`（最小集合；载荷以 nobody 运行本无 cap，`no-new-privileges` 阻断 setuid/file-caps 提权，实测 `capsh` 语义下 nobody 无法获得 CHOWN）。实验证据：`docker run --cap-drop ALL` chown → EPERM；`--cap-add CHOWN` 后 chown 成功且 /workspace 变为 nobody:nogroup。测试：全参断言/默认加固断言同步 +3 处，seccomp 用例改断言合并。真实 Docker 冒烟：建容器执行 `print(1)` 输出 1，HostConfig 实测 CapDrop=[ALL]/CapAdd=[CHOWN]/SecurityOpt=[no-new-privileges]/Memory=256MiB，put_file→get_file 跨调用一致。全量 929 passed / 1 skipped，mypy/ruff 全绿。
+
+### TD-019：MCP server 超时降级后无重连机制
+
+**问题**：TD-016 CR Y3——server 超时降级后所有调用快速失败，唯一的恢复途径是重启 Agent。长会话里一次网络抖动就永久失去该 server。**修法**：降级状态加 TTL（如 60s）过期后下次调用先尝试重连（新 ClientSession），重连成功清标记；或提供显式 `mcp__reconnect` 管理入口。需小 Spec 定口径。
+
+### TD-020：`OpenAIClient` 无流式输出
+
+**问题**：`llm/client.py` 只支持非流式 `chat()`；长任务里用户盯着空白终端等几十秒。CLI chat 体验缺口。**修法**：`stream=True` + SSE 解析逐 token 回调，CLI render 增量渲染；EchoClient 同步支持；注意 tool_calls 在流式下的聚合解析。
+
+### TD-021：bind 模式缺会话内 `/undo` `/diff` git 交互
+
+**问题**：TD-015 Non-Goal 遗留——bind 模式回滚目前要靠用户手动 `git reset --hard <sha>`；快照 sha 只在启动横幅出现一次，会话中不可见。**修法**：chat 模式加 `/undo`（reset 到快照）`/diff`（显示 Agent 改动）斜杠命令，仅在 bind 模式可用。
+
+### TD-022：Web UI 无写操作确认面板
+
+**问题**：TD-008 遗留——Web 无确认界面，导致 bind 模式下 Web 只能拒绝启动或显式关审批（风险自担）。**修法**：chat 端点遇审批请求时返回待确认状态，前端弹确认框，用户选择后重放调用。需小 Spec 定交互。
 
 ---
 

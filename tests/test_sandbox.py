@@ -149,6 +149,9 @@ class TestDockerSandboxBackendContainerLifecycle:
             volumes={
                 backend.workspace_volume: {"bind": "/workspace", "mode": "rw"},
             },
+            cap_drop=["ALL"],
+            cap_add=["CHOWN"],
+            security_opt=["no-new-privileges"],
             tmpfs={"/tmp": "rw,noexec,nosuid,size=64m"},
         )
         mock_container.start.assert_called_once()
@@ -449,6 +452,11 @@ class TestDockerSandboxBackendSecurity:
         assert kwargs.get("user") == "nobody"
         assert kwargs.get("read_only") is True
         assert kwargs.get("tmpfs") == {"/tmp": "rw,noexec,nosuid,size=64m"}
+        # TD-018：默认加固——cap 全 drop 仅留 CHOWN（workspace chown 用），
+        # 并禁止进程提权。
+        assert kwargs.get("cap_drop") == ["ALL"]
+        assert kwargs.get("cap_add") == ["CHOWN"]
+        assert kwargs.get("security_opt") == ["no-new-privileges"]
 
     @pytest.mark.asyncio
     async def test_custom_security_params(self, mock_client):
@@ -472,6 +480,34 @@ class TestDockerSandboxBackendSecurity:
         assert kwargs.get("user") == "root"
         assert kwargs.get("read_only") is False
         assert kwargs.get("tmpfs") == {"/tmp": "rw,size=128m"}
+
+    @pytest.mark.asyncio
+    async def test_create_container_uses_backend_mem_limit(self, mock_client):
+        """__init__ 的 mem_limit 应作为默认内存上限应用到容器创建（TD-017）。"""
+        mock_container = MagicMock(spec=Container)
+        mock_container.id = "mem123"
+        mock_client.containers.create.return_value = mock_container
+        backend = DockerSandboxBackend(mem_limit="128m")
+
+        await backend.create_container()
+
+        _, kwargs = mock_client.containers.create.call_args
+        assert kwargs.get("mem_limit") == "128m"
+
+    @pytest.mark.asyncio
+    async def test_create_container_memory_limit_overrides_backend_default(
+        self, mock_client
+    ):
+        """显式 memory_limit 参数优先于 backend 实例级 mem_limit（TD-017）。"""
+        mock_container = MagicMock(spec=Container)
+        mock_container.id = "mem456"
+        mock_client.containers.create.return_value = mock_container
+        backend = DockerSandboxBackend(mem_limit="128m")
+
+        await backend.create_container(memory_limit="512m")
+
+        _, kwargs = mock_client.containers.create.call_args
+        assert kwargs.get("mem_limit") == "512m"
 
     @pytest.mark.asyncio
     async def test_execute_code_uses_default_timeout(self, mock_client):
@@ -534,7 +570,10 @@ class TestDockerSandboxBackendSecurity:
         await backend.create_container(seccomp_profile="/path/to/seccomp.json")
 
         _, kwargs = mock_client.containers.create.call_args
-        assert "seccomp=/path/to/seccomp.json" in kwargs.get("security_opt", [])
+        # TD-018：seccomp 追加到默认 no-new-privileges 之后（合并而非覆盖）。
+        security_opt = kwargs.get("security_opt", [])
+        assert "no-new-privileges" in security_opt
+        assert "seccomp=/path/to/seccomp.json" in security_opt
 
 
 class TestDockerSandboxBackendFileTransfer:

@@ -75,6 +75,7 @@ class DockerSandboxBackend:
         workspace_bind: str | None = None,
         network_mode: str = "none",
         allow_setup_network: bool = False,
+        mem_limit: str | None = None,
     ) -> None:
         """初始化 Docker 后端。
 
@@ -96,12 +97,16 @@ class DockerSandboxBackend:
                 属性 `setup_network_enabled` 供工具层查询；为 True 时
                 `execute_code(allow_network=True)` 会现场创建有网（bridge）
                 临时容器执行，用完即销毁不入池。
+            mem_limit: TD-017——实例级默认内存上限，docker 风格字符串
+                （如 "256m"），None 表示不限制；作为 `_do_create_container`
+                的默认 memory_limit，调用方显式传参优先。
         """
         self.image: str = image
         self.timeout: int = timeout
         self.image_registry: str | None = image_registry
         self.network_mode: str = network_mode
         self.setup_network_enabled: bool = allow_setup_network
+        self.mem_limit: str | None = mem_limit
         self.workspace_volume: str = (
             workspace_volume or f"hermes-workspace-{uuid.uuid4().hex[:8]}"
         )
@@ -220,18 +225,31 @@ class DockerSandboxBackend:
                 "user": effective_user,
                 "read_only": read_only,
                 "volumes": volumes,
+                # TD-018：行业标准加固——drop 全部 capabilities，仅回加 CHOWN
+                # （EVAL-010 的 workspace chown 以 root exec 执行，需 CAP_CHOWN；
+                # 沙箱载荷以 nobody 运行本就无 cap，且 no-new-privileges 阻断
+                # setuid/file-caps 提权，无法获得 CHOWN）。实测：缺 CHOWN 时
+                # chown 报 EPERM，workspace 将不可写。
+                "cap_drop": ["ALL"],
+                "cap_add": ["CHOWN"],
+                "security_opt": ["no-new-privileges"],
             }
             if self.workspace_bind is not None:
                 # bind 模式：宿主 uid 在容器内无 passwd 条目，HOME 指向只读层
                 # 会导致工具写家目录失败；指向可写 tmpfs 的 /tmp。
                 create_kwargs["environment"] = {"HOME": "/tmp"}
-            if memory_limit is not None:
-                create_kwargs["mem_limit"] = memory_limit
+            # TD-017：实例级 mem_limit 作为默认内存上限，调用方显式传参优先。
+            effective_memory_limit = (
+                memory_limit if memory_limit is not None else self.mem_limit
+            )
+            if effective_memory_limit is not None:
+                create_kwargs["mem_limit"] = effective_memory_limit
             if tmpfs is not None:
                 create_kwargs["tmpfs"] = tmpfs
             elif read_only:
                 create_kwargs["tmpfs"] = {"/tmp": "rw,noexec,nosuid,size=64m"}
             if seccomp_profile is not None:
+                # 追加到默认 no-new-privileges 之后（合并而非覆盖）。
                 create_kwargs.setdefault("security_opt", []).append(
                     f"seccomp={seccomp_profile}"
                 )
@@ -294,6 +312,9 @@ class DockerSandboxBackend:
           - user="nobody"：以非 root 用户运行
           - read_only=True：根文件系统只读
           - tmpfs={"/tmp": "rw,noexec,nosuid,size=64m"}：/tmp 可写但隔离
+          - cap_drop=["ALL"] + cap_add=["CHOWN"]：drop 全部 capabilities，
+            仅保留 workspace chown 所需的 CHOWN（TD-018）
+          - security_opt=["no-new-privileges"]：禁止进程提权（TD-018）
 
         参数：
             command: 容器启动后执行的命令，默认保持容器长期运行。

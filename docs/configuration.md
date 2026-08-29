@@ -152,7 +152,7 @@ agent:
 | `image` | `str` | `python:3.11-slim` | Docker 镜像（仅 `docker` 后端使用）。 |
 | `image_registry` | `str \| null` | `null` | 镜像源地址（TD-007，如 `docker.m.daocloud.io`）。配置后 `ensure_image()` 从该源拉取并打标回原名；官方镜像自动补 `library/` 前缀。`null` 表示从 Docker Hub 拉取。 |
 | `timeout` | `int` | `30` | 单次代码执行超时时间（秒）。 |
-| `memory_limit_mb` | `int` | `256` | 容器内存上限（MB）。 |
+| `memory_limit_mb` | `int` | `256` | 容器内存上限（MB，仅 `docker` 后端）。工厂透传为 Docker `mem_limit`（TD-017，如 `256` → `"256m"`）；`subprocess` 后端无隔离语义，不生效。 |
 | `volume_name` | `str \| null` | `null` | 持久工作区卷名（TD-015 单元 B，仅 `docker` 后端）。配置后使用固定 Docker 卷 `litmus-ws-<volume_name>`，跨会话保留 `/workspace` 文件且关闭时不删除；`null` 时使用随机卷并在关闭时清理。只允许字母、数字、`_`、`.`、`-`。 |
 | `host_dir` | `str \| null` | `null` | 宿主机目录 bind 挂载（TD-015 单元 C）。配置后 Agent 直接操作宿主机真实项目目录（容器内 `/workspace` → `host_dir`），与 `volume_name` 互斥。详见下方"bind 工作区模式"警示。 |
 | `network_mode` | `str` | `none` | 容器池网络模式（TD-010，仅 `docker` 后端），原样透传给 Docker（`none`/`bridge`/...）。默认 `none` 禁网。注意 `bridge` 等模式可经 docker0 网关访问宿主机内网（含云 metadata 169.254.169.254），内网敏感环境慎用。 |
@@ -165,7 +165,7 @@ agent:
 > 1. **git 强制快照**：`host_dir` 必须已是 git 仓库（否则拒绝启动，引导 `git init`）；启动时若工作区 dirty，自动在当前分支提交快照（信息 `litmus: pre-agent snapshot`，署名 `litmus-agent`，通过 env 级 `GIT_AUTHOR_*` 兜底，不改你的 git 配置）。docker 与 subprocess 后端同样强制。
 > 2. **写确认默认开启**：未显式配置 `agent.human_approval.enabled` 时按 `true` 生效（`file_write`/`file_edit` 执行前询问 `y/n/a`）；非交互环境（无 TTY / 管道）下默认**拒绝**写操作。显式设 `false` 可关闭，但会打 warning，风险自担。**Web UI 无确认界面**：检测到 `host_dir` 且未显式关闭审批时拒绝启动并提示。
 > 3. **敏感文件 read deny**：默认注入优先级 90 的读拒绝规则：`**/.env*`、`**/.ssh/**`、`**/*.{pem,key}`、`**/id_rsa*`、`**/.git/**`。`security.enabled` 未显式配置时按 `true` 生效；显式关闭打 warning。注意该策略约束的是**工具层**访问（`grep`/`glob` 内嵌脚本另按同口径硬编码兜底过滤）；容器内 `sandbox_exec` 执行的代码**不受策略约束**——bind 模式的真实边界是**挂载点 + git 快照 + 写确认**三件套，read deny 仅为辅助。
-> 4. **容器加固维持**：network=none、read_only 根文件系统 + tmpfs、无特权、不挂 docker.sock；bind 模式容器设 `HOME=/tmp`，POSIX 下以宿主 `uid:gid` 运行（保证写出文件属主正确）并跳过 chown；Windows 维持 nobody（Docker Desktop 文件共享层自动映射属主）。
+> 4. **容器加固维持**：network=none、read_only 根文件系统 + tmpfs、`cap_drop=ALL`（仅回加 `CHOWN` 供 workspace chown）+ `no-new-privileges`（TD-018）、不挂 docker.sock；bind 模式容器设 `HOME=/tmp`，POSIX 下以宿主 `uid:gid` 运行（保证写出文件属主正确）并跳过 chown；Windows 维持 nobody（Docker Desktop 文件共享层自动映射属主）。
 >
 > **⚠️ 追加警示（TD-010）**：bind 模式下再显式开启 `allow_setup_network: true` 属于攻击面叠加——pip 意图的执行会在**有网（bridge）容器中直写宿主目录**，工厂会打 warning。且 bridge 容器可经 docker0 网关访问宿主机内网（含云 metadata 服务 169.254.169.254），内网敏感环境同样慎用。除非你明确需要"边装依赖边改宿主机代码"的场景，否则不要在 bind 模式开启它。
 >

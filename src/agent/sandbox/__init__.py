@@ -54,6 +54,9 @@ def create_sandbox_backend(config: SandboxConfig | None = None) -> SandboxBacken
     allow_setup_network = (
         config.allow_setup_network if config is not None else False
     )
+    # TD-017：内存上限 MB → docker 风格字符串（"256m"）透传给 docker 后端；
+    # config 缺省时镜像 SandboxConfig 默认值 256（同上方 timeout 的镜像默认惯例）。
+    mem_limit = f"{config.memory_limit_mb}m" if config is not None else "256m"
 
     if backend == "docker":
         # TD-015 单元 B：volume_name → 固定卷 litmus-ws-<name> 且关闭时保留；
@@ -75,6 +78,7 @@ def create_sandbox_backend(config: SandboxConfig | None = None) -> SandboxBacken
                 cleanup_workspace=False,
                 network_mode=network_mode,
                 allow_setup_network=allow_setup_network,
+                mem_limit=mem_limit,
             )
             if not _docker_available(bind_backend):
                 raise ValueError(
@@ -91,6 +95,7 @@ def create_sandbox_backend(config: SandboxConfig | None = None) -> SandboxBacken
             cleanup_workspace=volume_name is None,
             network_mode=network_mode,
             allow_setup_network=allow_setup_network,
+            mem_limit=mem_limit,
         )
     if backend == "subprocess":
         if volume_name is not None:

@@ -124,3 +124,40 @@ class TestFactoryRegistryPassthrough:
             assert backend.image_registry is None
         finally:
             backend.close()
+
+
+class TestFactoryMemoryLimitPassthrough:
+    """TD-017：工厂向 Docker 后端透传 memory_limit_mb（MB → docker 风格字符串）。"""
+
+    def test_memory_limit_passed_to_docker_backend(self) -> None:
+        """配置 memory_limit_mb=512 时，Docker 后端实例 mem_limit 为 "512m"。"""
+        backend = create_sandbox_backend(
+            SandboxConfig(backend="docker", memory_limit_mb=512)
+        )
+        try:
+            assert isinstance(backend, DockerSandboxBackend)
+            assert backend.mem_limit == "512m"
+        finally:
+            backend.close()
+
+    def test_memory_limit_default_mirrors_config(self) -> None:
+        """默认配置下 mem_limit 为 "256m"（对齐 SandboxConfig.memory_limit_mb 默认值）。"""
+        backend = create_sandbox_backend(SandboxConfig(backend="docker"))
+        try:
+            assert isinstance(backend, DockerSandboxBackend)
+            assert backend.mem_limit == "256m"
+        finally:
+            backend.close()
+
+    def test_memory_limit_also_passed_in_bind_mode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """bind 模式（host_dir）分支同样透传 mem_limit（跳过真实 Docker 门禁）。"""
+        monkeypatch.setattr("agent.sandbox._docker_available", lambda backend: True)
+        config = SandboxConfig(backend="docker", host_dir="D:/proj", memory_limit_mb=64)
+        backend = create_sandbox_backend(config)
+        try:
+            assert isinstance(backend, DockerSandboxBackend)
+            assert backend.mem_limit == "64m"
+        finally:
+            backend.close()
