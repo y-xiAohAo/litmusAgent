@@ -82,11 +82,17 @@ def _make_agent(
     servers: list[dict[str, Any]],
     client: BaseLLMClient | None = None,
     tool_timeout: int = 30,
+    degrade_ttl: int = 60,
     approval_callback: Any = None,
     **config_kwargs: Any,
 ) -> Agent:
     config = AgentConfig(
-        mcp={"tool_timeout": tool_timeout, "servers": servers}, **config_kwargs
+        mcp={
+            "tool_timeout": tool_timeout,
+            "degrade_ttl": degrade_ttl,
+            "servers": servers,
+        },
+        **config_kwargs,
     )
     return Agent(
         llm_client=client or ScriptClient([_text_step("done")]),
@@ -512,7 +518,7 @@ class TestAssemblyRace:
 
 
 class TestDegrade:
-    """同行评审 Y3：超时/失败后 server 降级，后续调用快速失败（不重连）。"""
+    """同行评审 Y3：超时/失败后 server 降级，后续调用快速失败。"""
 
     async def test_timed_out_server_degraded_and_fast_fails(self) -> None:
         agent = _make_agent([_stdio_server()], tool_timeout=1)
@@ -534,6 +540,206 @@ class TestDegrade:
             assert "server 已降级" in r2.content
             assert "上次调用超时" in r2.content
             assert elapsed < 1  # 快速失败，未走 wait_for 超时
+        finally:
+            agent.close()
+
+
+def _patch_clock(
+    monkeypatch: pytest.MonkeyPatch, start: float = 1000.0
+) -> list[float]:
+    """把 mcp_client 的降级 TTL 时钟换成可控假时钟，返回可变时间盒（秒）。
+
+    只替换 ``agent.mcp_client._monotonic``（降级计时专用），不影响
+    asyncio 事件循环自身的时钟。
+    """
+    from agent import mcp_client
+
+    now = [start]
+    monkeypatch.setattr(mcp_client, "_monotonic", lambda: now[0])
+    return now
+
+
+class TestDegradeReconnect:
+    """TD-019：降级带 TTL，过期后惰性重连；重连失败刷新时间戳继续快速失败。"""
+
+    def test_degrade_ttl_config_default_and_custom(self) -> None:
+        """degrade_ttl 默认 60，可经配置覆盖。"""
+        from agent.config import MCPConfig
+
+        assert MCPConfig().degrade_ttl == 60
+        config = AgentConfig(mcp={"degrade_ttl": 5, "servers": []})
+        assert config.mcp.degrade_ttl == 5
+
+    async def test_fast_fail_within_ttl_no_reconnect(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TTL 内快速失败且不重连（session 与生命周期任务保持原样）。"""
+        now = _patch_clock(monkeypatch)
+        agent = _make_agent([_stdio_server()], tool_timeout=1)  # degrade_ttl=60
+        try:
+            await agent._ensure_mcp_connected()
+            manager = agent._mcp_manager
+            assert manager is not None
+            old_session = manager._sessions["fake"]
+            old_handles = list(manager._handles)
+
+            r1 = await agent.tools.execute(
+                ToolCall(id="t1", name="mcp__fake__hang", arguments={})
+            )
+            assert r1.success is False
+            assert "超时" in r1.content
+
+            now[0] += 30  # TTL(60s) 内
+            r2 = await agent.tools.execute(
+                ToolCall(id="t2", name="mcp__fake__echo", arguments={"text": "hi"})
+            )
+            assert r2.success is False
+            assert "server 已降级" in r2.content
+            assert "上次调用超时" in r2.content
+            # 未触发重连：session 与 handles 原样
+            assert manager._sessions["fake"] is old_session
+            assert manager._handles == old_handles
+        finally:
+            agent.close()
+
+    async def test_reconnect_after_ttl_success(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TTL 过期后下一次调用先重连：成功则清除降级并正常执行本次调用。"""
+        now = _patch_clock(monkeypatch)
+        agent = _make_agent([_stdio_server()], tool_timeout=1)
+        try:
+            await agent._ensure_mcp_connected()
+            manager = agent._mcp_manager
+            assert manager is not None
+            old_session = manager._sessions["fake"]
+
+            r1 = await agent.tools.execute(
+                ToolCall(id="t3", name="mcp__fake__hang", arguments={})
+            )
+            assert r1.success is False
+
+            now[0] += 61  # 超过 degrade_ttl=60
+            r2 = await agent.tools.execute(
+                ToolCall(id="t4", name="mcp__fake__echo", arguments={"text": "hi"})
+            )
+            assert r2.success is True
+            assert r2.content == "echo:hi"
+            # 降级清除 + session 已换新（重连新建 ClientSession）
+            assert "fake" not in manager._degraded
+            assert manager._sessions["fake"] is not old_session
+        finally:
+            agent.close()
+
+    async def test_reconnect_failure_refreshes_ttl(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """重连失败 → 刷新降级时间戳继续快速失败；再次过期后可重连恢复。"""
+        from agent.mcp_client import MCPManager
+
+        now = _patch_clock(monkeypatch)
+        real_open = MCPManager._open_session
+        attempts = 0
+        fail_open = False
+
+        async def fake_open(self: MCPManager, server: Any, stack: Any) -> Any:
+            nonlocal attempts
+            attempts += 1
+            if fail_open:
+                raise RuntimeError("模拟重连失败")
+            return await real_open(self, server, stack)
+
+        monkeypatch.setattr(MCPManager, "_open_session", fake_open)
+        agent = _make_agent([_stdio_server()], tool_timeout=1)
+        try:
+            await agent._ensure_mcp_connected()
+            manager = agent._mcp_manager
+            assert manager is not None
+            assert attempts == 1  # 初次连接走过一次 _open_session
+
+            r1 = await agent.tools.execute(
+                ToolCall(id="t5", name="mcp__fake__hang", arguments={})
+            )
+            assert r1.success is False
+
+            fail_open = True
+            now[0] += 61  # TTL 过期 → 触发重连（失败）
+            r2 = await agent.tools.execute(
+                ToolCall(id="t6", name="mcp__fake__echo", arguments={"text": "hi"})
+            )
+            assert r2.success is False
+            assert "server 已降级" in r2.content
+            assert "重连失败" in r2.content
+            assert attempts == 2
+
+            now[0] += 30  # 刷新后的 TTL 内 → 快速失败，不再重连
+            r3 = await agent.tools.execute(
+                ToolCall(id="t7", name="mcp__fake__echo", arguments={"text": "hi"})
+            )
+            assert r3.success is False
+            assert "重连失败" in r3.content
+            assert attempts == 2
+
+            now[0] += 31  # 再次过期；恢复 _open_session → 重连成功
+            fail_open = False
+            r4 = await agent.tools.execute(
+                ToolCall(id="t8", name="mcp__fake__echo", arguments={"text": "hi"})
+            )
+            assert r4.success is True
+            assert r4.content == "echo:hi"
+            assert attempts == 3
+            assert "fake" not in manager._degraded
+        finally:
+            agent.close()
+
+    async def test_reconnect_after_stdio_server_restart(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """真实链路：kill stdio server 子进程后调用失败降级；TTL 过期重连恢复。
+
+        stdio 形态的"kill 再重启"模拟：重连路径重新拉起子进程。
+        （SSE 形态不做同端口重启实测：MCPServer 单例在活跃连接被 kill 后
+        内部状态会污染重启实例，属 SDK 侧行为，详见 TD-019 修复记录。）
+        """
+        import signal
+
+        now = _patch_clock(monkeypatch)
+        pid_file = tmp_path / "fake.pid"
+        server = _stdio_server(env={**os.environ, "FAKE_MCP_PID_FILE": str(pid_file)})
+        agent = _make_agent([server], tool_timeout=5)
+        try:
+            await agent._ensure_mcp_connected()
+            manager = agent._mcp_manager
+            assert manager is not None
+            for _ in range(100):
+                if pid_file.exists():
+                    break
+                await asyncio.sleep(0.05)
+            pid = int(pid_file.read_text(encoding="utf-8"))
+            assert _pid_alive(pid)
+            r0 = await agent.tools.execute(
+                ToolCall(id="k0", name="mcp__fake__echo", arguments={"text": "a"})
+            )
+            assert r0.success is True
+
+            # kill server 子进程 → 调用失败（或超时兜底）→ 降级
+            os.kill(pid, signal.SIGTERM)
+            await asyncio.sleep(0.2)  # 给管道断开一点传播时间
+            r1 = await agent.tools.execute(
+                ToolCall(id="k1", name="mcp__fake__echo", arguments={"text": "b"})
+            )
+            assert r1.success is False
+            assert "MCPError:" in r1.content
+            assert "fake" in manager._degraded
+
+            # TTL 过期 → 惰性重连（重新拉起子进程）→ 本次调用成功恢复
+            now[0] += 61
+            r2 = await agent.tools.execute(
+                ToolCall(id="k2", name="mcp__fake__echo", arguments={"text": "c"})
+            )
+            assert r2.success is True
+            assert r2.content == "echo:c"
+            assert "fake" not in manager._degraded
         finally:
             agent.close()
 

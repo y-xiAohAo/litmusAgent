@@ -268,6 +268,7 @@ pip install agent[mcp]   # 或 pip install mcp
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `tool_timeout` | `int` | `30` | 单次 MCP 工具调用强制超时（秒），防 server 僵死 |
+| `degrade_ttl` | `int` | `60` | 降级冷却秒数（TD-019）。server 调用超时/失败后进入降级：TTL 内对该 server 的调用快速失败；TTL 过期后下一次调用先惰性重连该 server（新建 ClientSession，走与初次连接相同的传输路径），成功则清除降级并正常执行本次调用，失败则刷新降级时间戳继续快速失败。纯惰性，无后台线程/定时任务 |
 | `servers` | `list` | `[]` | server 列表，为空则不激活 |
 
 每个 server 条目（`command` 与 `url` 互斥且必居其一）：
@@ -290,8 +291,10 @@ pip install agent[mcp]   # 或 pip install mcp
   `tools.enabled` 白名单控制（全名匹配）。
 - **失败降级**：单 server 连接失败只记 warning 并跳过；全部失败不阻塞 Agent。
 - **僵死防护**：调用超时返回 `MCPError: 调用超时...` 失败结果，Agent 继续；
-  超时/调用失败后该 server 记入降级表，后续调用立即返回
-  `MCPError: server 已降级...` 快速失败（不自动重连）。
+  超时/调用失败后该 server 记入降级表，TTL（`degrade_ttl`，默认 60 秒）内
+  后续调用立即返回 `MCPError: server 已降级...` 快速失败；TTL 过期后的
+  下一次调用先惰性重连该 server，成功则恢复正常调用，失败则重新计时
+  （TD-019，重连仅由调用触发，无后台任务）。
 - **策略锚点**：MCP 工具统一映射 resource=`mcp/server`、operation=`call`、
   subject=`mcp/<server>`，可在 `security.rules` 里按此写自定义规则；
   默认规则集不含 MCP 条目（人工确认是主防线）。

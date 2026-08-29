@@ -426,10 +426,15 @@ class MCPConfig(BaseModel):
 
     tool_timeout：单次 MCP 工具调用的强制超时（秒），asyncio.wait_for
     外层兜底，防 server 僵死（SDK 已知 cancel 不保证送达）。
+    degrade_ttl（TD-019）：server 调用超时/失败后的降级冷却秒数——
+    TTL 内对该 server 的调用快速失败；TTL 过期后下一次调用先惰性重连
+    该 server，成功则恢复并正常执行，失败则刷新降级时间戳继续快速失败
+    （纯惰性，无后台线程/定时任务）。
     servers：server 列表；为空或缺省 mcp 段时完全不激活。
     """
 
     tool_timeout: int = 30
+    degrade_ttl: int = 60
     servers: list[MCPServerConfig] = Field(default_factory=list)
 
 

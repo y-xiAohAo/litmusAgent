@@ -24,9 +24,14 @@
 降级口径（Spec §6-Q5）：单 server 连接失败只记 warning 并跳过，
 全部失败也不阻塞 Agent。
 
-调用降级（同行评审 Y3）：某 server 的调用超时/失败后记入降级表，
-后续对该 server 的调用立即返回 ``MCPError: server 已降级`` 快速失败
-（不做自动重连——重连是 Non-Goal）。
+调用降级（同行评审 Y3 + TD-019）：某 server 的调用超时/失败后记入
+降级表，后续对该 server 的调用立即返回 ``MCPError: server 已降级``
+快速失败。降级带 TTL（``MCPConfig.degrade_ttl``，默认 60 秒）：TTL
+过期后的下一次调用先惰性重连该 server（新建 ClientSession，走与初次
+连接相同的传输路径，并在新的专属生命周期任务内建立——旧任务先 stop
+回收再重建，满足 anyio cancel scope 的任务绑定），成功则清除降级标记
+并正常执行本次调用，失败则刷新降级时间戳继续快速失败。纯惰性：
+无后台线程/定时任务，重连仅由 TTL 过期后的第一次调用触发。
 """
 
 from __future__ import annotations
@@ -34,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Any
 
@@ -49,6 +55,11 @@ _MCP_MISSING_HINT = (
     "配置了 mcp.servers，但未安装 MCP SDK。请先执行 pip install agent[mcp]"
     "（或 pip install mcp）后再运行。"
 )
+
+
+def _monotonic() -> float:
+    """单调时钟秒数（模块级封装，便于测试 monkeypatch 控制降级 TTL 计时）。"""
+    return time.monotonic()
 
 
 def _mcp_http_client_factory(
@@ -104,12 +115,20 @@ class MCPManager:
         self._config = config
         self._loop: asyncio.AbstractEventLoop | None = None
         self._handles: list[_ServerHandle] = []
+        # TD-019：server 名 → 当前 ClientSession（handler 调用时动态解析，
+        # 重连后自动指向新 session）；server 名 → 配置（供惰性重连查找）。
+        self._sessions: dict[str, Any] = {}
+        self._server_configs: dict[str, MCPServerConfig] = {}
+        # 串行化惰性重连：并发调用只重建一次（锁内双重检查）。
+        self._reconnect_lock = asyncio.Lock()
+        # close()/aclose() 后置 True：禁止再触发惰性重连。
+        self._closed = False
         self.tool_servers: dict[str, str] = {}
         self.untrusted_tools: set[str] = set()
         self.connected_servers: list[str] = []
         self.failed_servers: list[str] = []
-        # Y3 调用降级表：server 名 → 降级原因（超时/调用失败后快速失败）。
-        self._degraded: dict[str, str] = {}
+        # Y3 调用降级表（TD-019 起带 TTL）：server 名 → (降级原因, 降级时刻)。
+        self._degraded: dict[str, tuple[str, float]] = {}
 
     async def connect(
         self,
@@ -137,6 +156,7 @@ class MCPManager:
         # Windows 上冷启动较慢，下限 15s，避免小的 tool_timeout 误杀连接。
         connect_timeout = max(self._config.tool_timeout, 15)
         for server in self._config.servers:
+            self._server_configs[server.name] = server
             handle = _ServerHandle(server.name)
             self._handles.append(handle)
             handle.task = asyncio.create_task(
@@ -174,12 +194,15 @@ class MCPManager:
 
         cancel scope 的进入与退出都在本任务内完成，满足 anyio 的任务绑定
         约束；关闭由 ``stop`` 事件驱动，因此 ``close()`` 可从任意同步
-        上下文触发。
+        上下文触发。任务退出时摘除 ``_sessions`` 里本任务建立的 session。
         """
+        session: Any = None
         try:
             async with AsyncExitStack() as stack:
                 try:
-                    await self._connect_server(server, stack, registry, enabled)
+                    session = await self._connect_server(
+                        server, stack, registry, enabled
+                    )
                 except Exception as exc:  # noqa: BLE001 —— 单 server 失败跳过降级
                     handle.error = exc
                     handle.ready.set()
@@ -189,7 +212,45 @@ class MCPManager:
         except Exception as exc:  # noqa: BLE001 —— 关闭失败不向上传播
             logger.warning("MCP server %s 关闭异常：%s", server.name, exc)
         finally:
+            self._drop_session(server.name, session)
             handle.closed.set()
+
+    async def _reconnect_lifecycle(
+        self,
+        server: MCPServerConfig,
+        handle: _ServerHandle,
+    ) -> None:
+        """重连生命周期任务：建立新 session → 等待 stop → 同任务内清理（TD-019）。
+
+        与 ``_server_lifecycle`` 同模型（cancel scope 进出都在本任务内），
+        但不重新发现/注册工具——工具 schema 沿用首次发现结果，handler 经
+        ``_sessions`` 动态解析当前 session，重连后自动指向新 session。
+        """
+        session: Any = None
+        try:
+            async with AsyncExitStack() as stack:
+                try:
+                    session = await self._open_session(server, stack)
+                except Exception as exc:  # noqa: BLE001 —— 重连失败回传 error
+                    handle.error = exc
+                    handle.ready.set()
+                    return
+                self._sessions[server.name] = session
+                handle.ready.set()
+                await handle.stop.wait()
+        except Exception as exc:  # noqa: BLE001 —— 关闭失败不向上传播
+            logger.warning("MCP server %s 重连任务关闭异常：%s", server.name, exc)
+        finally:
+            self._drop_session(server.name, session)
+            handle.closed.set()
+
+    def _drop_session(self, server_name: str, session: Any) -> None:
+        """摘除 ``_sessions`` 中的 session（仅当仍指向传入的这个对象）。
+
+        身份比较防止误删重连后由新生命周期任务建立的同名 session。
+        """
+        if session is not None and self._sessions.get(server_name) is session:
+            del self._sessions[server_name]
 
     async def _connect_server(
         self,
@@ -197,8 +258,35 @@ class MCPManager:
         stack: AsyncExitStack,
         registry: ToolRegistry,
         enabled: list[str] | None,
-    ) -> None:
-        """连接单个 server：建立 session、发现并注册工具。"""
+    ) -> Any:
+        """连接单个 server：建立 session、发现并注册工具，返回就绪 session。"""
+        session = await self._open_session(server, stack)
+        tools = await session.list_tools()
+        for tool in tools.tools:
+            full_name = f"mcp__{server.name}__{tool.name}"
+            if enabled is not None and full_name not in enabled:
+                continue
+            self.tool_servers[full_name] = server.name
+            if not server.trust:
+                self.untrusted_tools.add(full_name)
+            registry.register(self._wrap_tool(server, tool))
+        self._sessions[server.name] = session
+        logger.info(
+            "MCP server %s 注册 %d 个工具", server.name, len(tools.tools)
+        )
+        return session
+
+    async def _open_session(
+        self,
+        server: MCPServerConfig,
+        stack: AsyncExitStack,
+    ) -> Any:
+        """建立传输 + ClientSession + initialize，返回就绪 session（TD-019 拆出）。
+
+        只负责连接建立，不发现/注册工具——初次连接（``_connect_server``）
+        与降级重连（``_reconnect_lifecycle``）共用同一路径。异步上下文挂
+        在调用方传入的 stack 上，须由专属生命周期任务持有（anyio 约束）。
+        """
         from mcp import ClientSession, StdioServerParameters
 
         # Y2 传输判别：显式 transport 优先；None 时退回启发式
@@ -245,32 +333,24 @@ class MCPManager:
 
         session = await stack.enter_async_context(ClientSession(read, write))
         await session.initialize()
-        tools = await session.list_tools()
-        for tool in tools.tools:
-            full_name = f"mcp__{server.name}__{tool.name}"
-            if enabled is not None and full_name not in enabled:
-                continue
-            self.tool_servers[full_name] = server.name
-            if not server.trust:
-                self.untrusted_tools.add(full_name)
-            registry.register(self._wrap_tool(server, session, tool))
-        logger.info(
-            "MCP server %s 注册 %d 个工具", server.name, len(tools.tools)
-        )
+        return session
 
     def _wrap_tool(
         self,
         server: MCPServerConfig,
-        session: Any,
         tool: Any,
     ) -> ToolSpec:
-        """把 MCP 工具包装为 ToolSpec（超时兜底 + 错误前缀映射）。
+        """把 MCP 工具包装为 ToolSpec（超时兜底 + 错误前缀映射 + 降级门控）。
 
         handler 行为：
+          - session 在调用时经 ``_sessions`` 动态解析（TD-019）：重连后
+            自动指向新 session，无需重新注册工具；
+          - 降级门控（Y3 + TD-019）：server 在降级 TTL 内 → 立即返回
+            ``MCPError: server 已降级`` 快速失败；TTL 过期 → 先惰性重连，
+            成功则清除降级并继续本次调用，失败则刷新时间戳继续快速失败；
           - ``session.call_tool`` 外层套 ``asyncio.wait_for(tool_timeout)``，
             server 僵死时强制超时，返回失败结果而不阻塞 Agent；
-          - 调用超时/异常后该 server 记入降级表（Y3），后续调用立即
-            返回 ``MCPError: server 已降级`` 快速失败，不做自动重连；
+          - 调用超时/异常后该 server 记入降级表（带单调时钟时间戳）；
           - MCP 结果 ``is_error=True`` → ``ToolResult(success=False)``，
             内容带 ``MCPError:`` 前缀（ErrorClassifier 可识别）；
           - 成功时拼接全部 text 内容块；无 text 但有 structured_content
@@ -281,8 +361,8 @@ class MCPManager:
         full_name = f"mcp__{server.name}__{tool.name}"
 
         async def _handler(**kwargs: Any) -> ToolResult:
-            # Y3：server 已降级（上次调用超时/失败）→ 快速失败，不重连。
-            degrade_reason = self._degraded.get(server.name)
+            # Y3 + TD-019：降级门控（TTL 内快速失败；过期先惰性重连）。
+            degrade_reason = await self._degrade_gate(server.name)
             if degrade_reason is not None:
                 return ToolResult(
                     tool_call_id="",
@@ -292,13 +372,20 @@ class MCPManager:
                     ),
                     success=False,
                 )
+            session = self._sessions.get(server.name)
+            if session is None:
+                return ToolResult(
+                    tool_call_id="",
+                    content=f"MCPError: server 未连接或已关闭：{full_name}",
+                    success=False,
+                )
             try:
                 result = await asyncio.wait_for(
                     session.call_tool(tool_name, kwargs), timeout=timeout
                 )
             except (TimeoutError, asyncio.TimeoutError):
                 logger.warning("MCP 工具调用超时（%ds）：%s", timeout, full_name)
-                self._degraded[server.name] = "上次调用超时"
+                self._degraded[server.name] = ("上次调用超时", _monotonic())
                 return ToolResult(
                     tool_call_id="",
                     content=(
@@ -309,7 +396,8 @@ class MCPManager:
                 )
             except Exception as exc:  # noqa: BLE001 —— 统一映射为失败结果
                 self._degraded[server.name] = (
-                    f"上次调用失败：{type(exc).__name__}"
+                    f"上次调用失败：{type(exc).__name__}",
+                    _monotonic(),
                 )
                 return ToolResult(
                     tool_call_id="",
@@ -346,8 +434,77 @@ class MCPManager:
             handler=_handler,
         )
 
+    async def _degrade_gate(self, server_name: str) -> str | None:
+        """降级门控（TD-019）：返回 None 放行，否则返回快速失败的降级原因。
+
+        TTL（``degrade_ttl``）内直接返回原因；TTL 过期后在锁内惰性重连：
+        成功则清除降级标记放行（本次调用继续执行），失败则刷新降级时间戳
+        继续快速失败。无后台线程——重连仅由 TTL 过期后的第一次调用触发；
+        ``_reconnect_lock`` 保证并发调用只重建一次（锁内双重检查）。
+        close() 后不再重连，降级永久快速失败。
+        """
+        entry = self._degraded.get(server_name)
+        if entry is None:
+            return None
+        reason, since = entry
+        if self._closed or _monotonic() - since < self._config.degrade_ttl:
+            return reason
+        async with self._reconnect_lock:
+            # 双重检查：等锁期间并发调用可能已重连成功或刚刷新过时间戳。
+            entry = self._degraded.get(server_name)
+            if entry is None:
+                return None
+            reason, since = entry
+            if _monotonic() - since < self._config.degrade_ttl:
+                return reason
+            if await self._reconnect_server(server_name):
+                del self._degraded[server_name]
+                return None
+            base_reason = reason.split("；", 1)[0]
+            new_reason = f"{base_reason}；重连失败"
+            self._degraded[server_name] = (new_reason, _monotonic())
+            return new_reason
+
+    async def _reconnect_server(self, server_name: str) -> bool:
+        """惰性重连单个 server（TD-019），调用方须已持 ``_reconnect_lock``。
+
+        旧生命周期任务先 stop 并等待退出（旧 session / stdio 子进程随其
+        异步上下文回收），再在同一事件循环内创建新的专属任务建立新
+        session（anyio cancel scope 绑创建任务，不能跨任务复用旧上下文）。
+        成功返回 True（``_sessions`` 已指向新 session），失败返回 False。
+        """
+        if self._closed:
+            return False
+        server = self._server_configs.get(server_name)
+        if server is None:
+            return False
+        connect_timeout = max(self._config.tool_timeout, 15)
+        old = next((h for h in self._handles if h.name == server_name), None)
+        if old is not None:
+            old.stop.set()
+            try:
+                await asyncio.wait_for(old.closed.wait(), timeout=connect_timeout)
+            except (TimeoutError, asyncio.TimeoutError):
+                logger.warning("MCP server %s 旧连接关闭超时，继续重建", server_name)
+            if old in self._handles:
+                self._handles.remove(old)
+        handle = _ServerHandle(server_name)
+        self._handles.append(handle)
+        handle.task = asyncio.create_task(self._reconnect_lifecycle(server, handle))
+        try:
+            await asyncio.wait_for(handle.ready.wait(), timeout=connect_timeout)
+        except (TimeoutError, asyncio.TimeoutError):
+            handle.error = TimeoutError("重连初始化超时")
+            handle.stop.set()
+        if handle.error is not None:
+            logger.warning("MCP server %s 重连失败：%s", server_name, handle.error)
+            return False
+        logger.info("MCP server %s 重连成功，降级解除", server_name)
+        return True
+
     async def aclose(self) -> None:
         """异步关闭全部连接并等待回收完成（幂等）。"""
+        self._closed = True
         for handle in self._handles:
             handle.stop.set()
         if self._handles:
@@ -369,6 +526,7 @@ class MCPManager:
           - 循环已关闭（CLI chat 的 loop.close() 之后）：任务已随循环
             消亡，stdio 子进程在主进程退出时由系统回收兜底。
         """
+        self._closed = True
         if not self._handles:
             return
         for handle in self._handles:
