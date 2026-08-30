@@ -20,6 +20,7 @@ from agent import __version__
 from agent.cli.chat import CliStreamRenderer, make_cli_approval_callback, run_chat_loop
 from agent.cli.render import render_config, render_error, render_result
 from agent.cli.workspace_guard import apply_bind_safeguards
+from agent.cli.workspace_session import WorkspaceSession
 from agent.config import AgentConfig, load_config
 from agent.core.engine import Agent, ApprovalCallback
 from agent.llm import BaseLLMClient, EchoClient, OpenAIClient, StreamEvents
@@ -297,6 +298,7 @@ def _render_bind_banner(
     if snapshot_sha:
         lines.append(f"  回滚：git -C {host_dir} reset --hard {snapshot_sha}")
     lines.append(f"  审计：git -C {host_dir} status / git -C {host_dir} diff")
+    lines.append("  会话命令：/diff 查看改动；/undo 回滚最近任务（chat 模式可用）")
     message = "\n".join(lines)
     if plain:
         print(message)
@@ -412,7 +414,17 @@ def cmd_chat(args: argparse.Namespace) -> int:
         # 走友好输出而不是裸 traceback。
         render_error(f"沙箱配置错误：{exc}", plain=args.plain)
         return 1
-    return run_chat_loop(agent, plain=args.plain, stream_renderer=stream_renderer)
+    # TD-021：bind 模式创建会话工作台（/diff /undo 与任务前快照钩子）。
+    workspace_session = None
+    if config.sandbox.is_bind_mode():
+        assert config.sandbox.host_dir is not None  # bind 模式已校验非空
+        workspace_session = WorkspaceSession(config.sandbox.host_dir)
+    return run_chat_loop(
+        agent,
+        plain=args.plain,
+        stream_renderer=stream_renderer,
+        workspace_session=workspace_session,
+    )
 
 
 def cmd_run(args: argparse.Namespace) -> int:

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from rich.console import Console
@@ -15,9 +16,12 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 
 from agent.cli.render import render_error, render_result, render_tool_summary
+from agent.cli.workspace_session import ConfirmCallback, WorkspaceSession
 from agent.core.engine import Agent, ApprovalCallback
 from agent.core.types import ToolCall
 from agent.llm.base import StreamEvents
+
+logger = logging.getLogger(__name__)
 
 
 class CliStreamRenderer:
@@ -189,7 +193,7 @@ def _render_farewell(plain: bool = False) -> None:
     _render_info(farewell, plain=plain)
 
 
-def _render_help(plain: bool = False) -> None:
+def _render_help(plain: bool = False, bind_mode: bool = False) -> None:
     """渲染帮助信息。"""
     lines = [
         "可用命令：",
@@ -197,6 +201,8 @@ def _render_help(plain: bool = False) -> None:
         "  /quit    退出交互模式",
         "  /exit    同 /quit",
         "  /clear   清屏",
+        "  /diff    查看自最近任务快照以来的改动（仅 bind 工作区模式）",
+        "  /undo    回滚到最近任务快照（仅 bind 工作区模式）",
     ]
     if plain:
         print("\n".join(lines))
@@ -230,12 +236,44 @@ def _extract_tool_summary(agent: Agent, before_count: int) -> list[str]:
     return names
 
 
-def _handle_command(command: str, plain: bool = False) -> bool:
+def _make_confirm_callback(plain: bool = False) -> ConfirmCallback:
+    """构造 /undo 的交互式 y/n 确认回调（plain 用 input，否则 Rich Prompt）。
+
+    fail-closed（评审 O2）：EOFError / KeyboardInterrupt / 任何异常一律
+    视为拒绝（返回 False），绝不向上抛——确认通道出问题时宁可不动。
+    """
+
+    def confirm(question: str) -> bool:
+        """确认入口：返回 True 表示用户确认；异常/中断一律拒绝。"""
+        try:
+            if plain:
+                return input(f"{question} [y/n] ").strip().lower() == "y"
+            answer = Prompt.ask(
+                f"[yellow]{question}[/yellow]", choices=["y", "n"], default="n"
+            )
+            return answer == "y"
+        except (EOFError, KeyboardInterrupt):
+            return False
+        except Exception:  # noqa: BLE001
+            logger.warning("/undo 确认交互异常，按拒绝处理", exc_info=True)
+            return False
+
+    return confirm
+
+
+def _handle_command(
+    command: str,
+    plain: bool = False,
+    workspace_session: WorkspaceSession | None = None,
+    bind_mode: bool = False,
+) -> bool:
     """处理特殊命令。
 
     Args:
         command: 用户输入的命令（以 / 开头）。
         plain: 是否禁用 Rich 样式。
+        workspace_session: TD-021 bind 模式会话工作台；非 bind 为 None。
+        bind_mode: 是否 bind 工作区模式（仅用于帮助/提示文案）。
 
     Returns:
         True 表示继续循环，False 表示退出。
@@ -245,10 +283,23 @@ def _handle_command(command: str, plain: bool = False) -> bool:
         _render_farewell(plain=plain)
         return False
     if cmd == "/help":
-        _render_help(plain=plain)
+        _render_help(plain=plain, bind_mode=bind_mode)
         return True
     if cmd == "/clear":
         _clear_screen()
+        return True
+    if cmd in ("/diff", "/undo"):
+        if workspace_session is None:
+            _render_info(
+                f"{cmd} 仅 bind 工作区模式（sandbox.host_dir）可用。",
+                plain=plain,
+            )
+            return True
+        if cmd == "/diff":
+            _render_info(workspace_session.diff_report(), plain=plain)
+            return True
+        result = workspace_session.undo(confirm=_make_confirm_callback(plain=plain))
+        _render_info(result, plain=plain)
         return True
 
     _render_info(f"未知命令：{command}，输入 /help 查看可用命令。", plain=plain)
@@ -275,6 +326,7 @@ def run_chat_loop(
     agent: Agent,
     plain: bool = False,
     stream_renderer: CliStreamRenderer | None = None,
+    workspace_session: WorkspaceSession | None = None,
 ) -> int:
     """运行交互式对话循环。
 
@@ -283,11 +335,16 @@ def run_chat_loop(
         plain: 是否禁用 Rich 样式。
         stream_renderer: TD-020 流式渲染器；传入时每轮回复已逐字展示，
             循环内跳过 render_result / render_tool_summary，仅做收尾。
+        workspace_session: TD-021 bind 模式会话工作台；传入时注册
+            /diff、/undo 命令，并在每次任务前补快照、任务后差集出
+            Agent 新建文件清单。
 
     Returns:
         退出码：0 正常退出。
     """
     _render_greeting(plain=plain)
+    if workspace_session is not None:
+        _render_info("bind 工作区：可用 /diff 查看改动、/undo 回滚最近任务。", plain=plain)
 
     # EVAL-013：整个对话循环复用同一个事件循环。
     # 若每轮 asyncio.run()，循环会被反复创建并关闭，
@@ -305,9 +362,22 @@ def run_chat_loop(
                 continue
 
             if user_input.startswith("/"):
-                if not _handle_command(user_input, plain=plain):
+                if not _handle_command(
+                    user_input,
+                    plain=plain,
+                    workspace_session=workspace_session,
+                    bind_mode=workspace_session is not None,
+                ):
                     return 0
                 continue
+
+            # TD-021（裁决 Q3）：bind 模式每次任务前补快照。
+            if workspace_session is not None:
+                try:
+                    workspace_session.begin_task()
+                except ValueError as exc:
+                    render_error(f"任务前快照失败：{exc}", plain=plain)
+                    continue
 
             before_count = len(agent.messages)
             try:
@@ -322,6 +392,13 @@ def run_chat_loop(
                     stream_renderer.finish()
                 render_error(f"Agent 运行出错：{exc}", plain=plain)
                 continue
+            finally:
+                # TD-021：任务结束（含异常）差集出 Agent 新建文件清单。
+                if workspace_session is not None:
+                    try:
+                        workspace_session.end_task()
+                    except ValueError as exc:
+                        logger.warning("任务后 untracked 差集失败：%s", exc)
 
             tool_names = _extract_tool_summary(agent, before_count)
             if stream_renderer is not None:
@@ -333,6 +410,9 @@ def run_chat_loop(
             render_result(result, plain=plain)
     finally:
         loop.close()
+        # TD-021（评审 O3）：会话退出时清理 /diff 外迁的临时文件。
+        if workspace_session is not None:
+            workspace_session.cleanup()
         # TD-015：交互模式退出时收口沙箱 backend，避免孤儿卷泄漏。
         agent.close()
 

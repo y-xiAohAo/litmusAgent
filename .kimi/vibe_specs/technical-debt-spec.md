@@ -31,7 +31,7 @@
 | TD-018 | 容器加固缺 `cap_drop` / `no-new-privileges` | — | 🟡 低-中 | ✅ 已完成（2026-08-29：`cap_drop=ALL`+`cap_add=CHOWN`+`no-new-privileges`，真实 Docker 冒烟通过；929 passed） | ⚠️ 安全加固 | 0.5 天 |
 | TD-019 | MCP server 超时降级后无重连机制 | — | 🟡 低-中 | ✅ 已完成（2026-08-29：`degrade_ttl` 降级冷却 + TTL 过期惰性重连） | ❌ 否 | 0.5 天 |
 | TD-020 | `OpenAIClient` 无流式输出 | — | 🟡 低 | ✅ 已完成（2026-08-29：chat_stream 默认回退 + SSE 解析 + 思考链捕获 + CLI 三层渲染 + DeepSeek V4 适配；reasoning_content 多轮回传待真实端点补验；963 passed） | ❌ 否 | 0.5-1 天 |
-| TD-021 | bind 模式缺会话内 `/undo` `/diff` git 交互 | — | 🟡 低 | ⏳ 候选（2026-08-29 登记） | ❌ 否 | 0.5-1 天 |
+| TD-021 | bind 模式缺会话内 `/undo` `/diff` git 交互 | — | 🟡 低 | ✅ 已完成（2026-08-29：快照栈每任务补快照 + /diff 摘要外迁 + /undo 干净回滚零 git clean；987 passed，Spec：`mydocs/specs/2026-08-29_td-021-undo-diff-commands.md`） | ❌ 否 | 0.5-1 天 |
 | TD-022 | Web UI 无写操作确认面板 | — | 🟡 低 | ⏳ 候选（2026-08-29 登记） | ❌ 否 | 0.5-1 天 |
 
 ---

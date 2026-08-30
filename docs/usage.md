@@ -310,6 +310,30 @@ git -C D:/myproject diff                    # 看具体差异
 git -C D:/myproject reset --hard <快照sha>  # 回到启动前快照
 ```
 
+### 会话内 `/diff` 与 `/undo`（TD-021）
+
+`agent chat` 交互模式下，bind 工作区额外提供两个斜杠命令（非 bind 模式
+提示不可用）：
+
+- **`/diff`**：每次任务提交前会自动补一次快照。`/diff` 显示自最近任务
+  快照以来的改动——`git diff --stat` 摘要、Agent 新建（未跟踪）文件
+  清单与完整 diff 字节数；完整 diff 超过 8KB 时不刷屏，写入临时文件
+  并在输出中给出路径。
+- **`/undo`**：回滚到**最近一个任务**的快照。执行前始终二次确认
+  （列出将丢弃的已跟踪改动数与将删除的 Agent 新建文件清单）；若检测到
+  你在会话中自己重写/提交过历史（HEAD 漂移），先显式警示"undo 将一并
+  丢弃你自己的提交"。回滚用 `git reset --hard <快照sha>` + 逐个删除
+  清单内的 Agent 新建文件（**绝不调用 git clean**），清单外你自建的
+  未跟踪文件不受影响。多级回滚（/undo N）暂不支持。
+
+注意（快照 commit 噪音）：每次任务前的补快照会在你的分支上累积
+`litmus: pre-agent snapshot` 提交，署名 `litmus-agent` 可审计；如嫌
+噪音可在会话结束后自行 squash：
+
+```bash
+git -C D:/myproject reset --soft <会话开始前sha> && git commit -m "agent session"
+```
+
 注意：Docker 不可用时 bind 模式直接报错，不会降级到 subprocess；也不要让两个
 Agent 同时挂载同一个目录。
 
