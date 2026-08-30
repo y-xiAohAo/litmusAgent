@@ -13,7 +13,7 @@ Litmus Agent 是一个面向代码生成与执行的 LLM Agent 框架。它把"�
 - **自我纠错循环**：Agent 主循环持续调用 LLM，直到代码成功运行或达到最大轮数。
 - **交互式 CLI**：支持 `agent run` 单次运行与 `agent chat` 多轮对话，内置 Rich 美化输出。
 - **配置驱动**：通过 YAML 配置文件管理 LLM 模型、沙箱参数、工具集、安全策略与长期记忆。
-- **持久工作区**：三种工作区模式——默认随机卷（用完清理）、`volume_name` 命名卷（`litmus-ws-<name>` 跨会话保留）、`host_dir` bind 挂载宿主项目目录（git 强制快照 + 写确认默认开 + 敏感文件 read deny）。
+- **持久工作区**：三种工作区模式——默认随机卷（用完清理）、`volume_name` 命名卷（`litmus-ws-<name>` 跨会话保留）、`host_dir` bind 挂载宿主项目目录（git 强制快照 + 写确认默认开 + 敏感文件 read deny）；bind 会话内支持 `/diff` 审查改动、`/undo` 回滚最近任务。
 - **沙箱网络策略**：`network_mode` 配置化（默认 `none` 禁网），`allow_setup_network` 仅对 pip 安装意图的执行放行有网临时容器。
 - **MCP 工具接入**：声明式接入任意 MCP server（stdio / SSE / HTTP 三种传输），发现的工具以 `mcp__<server>__<tool>` 注册进统一卡口（策略 / 人工确认 / Trace），CLI/Web 场景默认逐次人工确认、`trust` 可豁免（可选依赖 `pip install "agent[mcp]"`）。
 - **流式与可观测渲染**：`--stream` 开启后最终回复逐字流式输出、模型思考链（`reasoning_content`，如 DeepSeek V4 思考模式）弱化渲染、工具调用实时进度行；默认关闭，不改变 Agent 循环语义。
