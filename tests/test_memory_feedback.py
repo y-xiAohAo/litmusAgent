@@ -71,7 +71,10 @@ def test_record_feedback_success(tmp_path: Path) -> None:
     assert fetched.feedback_score == 1
     assert fetched.feedback_count == 1
     assert fetched.last_feedback_at is not None
-    assert fetched.updated_at == fetched.last_feedback_at
+    # save() 会再次 bump updated_at（memory.py 既有语义）；Windows 时钟分辨率粗
+    # （~15.6ms）使两次读数恰好相等，Linux 下可能差几微秒——断言放宽到 1 秒窗口。
+    delta = abs((fetched.updated_at - fetched.last_feedback_at).total_seconds())
+    assert delta < 1.0
 
 
 def test_record_feedback_overwrites_latest(tmp_path: Path) -> None:

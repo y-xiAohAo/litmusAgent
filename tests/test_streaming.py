@@ -23,6 +23,26 @@ from agent.config import AgentConfig
 from agent.core.engine import Agent
 from agent.llm.base import BaseLLMClient, EchoClient, StreamEvents
 from agent.llm.client import OpenAIClient
+from agent.sandbox.docker_backend import ExecutionResult
+from tests.test_tools import MockSandboxBackend
+
+
+def _mock_glob_backend() -> MockSandboxBackend:
+    """构造预设 glob 成功的 mock 沙箱后端。
+
+    不注入时 Agent 工厂默认创建 Docker 后端，导致本文件用例依赖
+    真实 Docker daemon（CI 无 daemon 时 glob 执行失败）——注入后与环境无关。
+    """
+    return MockSandboxBackend(
+        execute_responses=[
+            ExecutionResult(
+                exit_code=0,
+                stdout='{"matches": ["a.py"], "truncated": false}',
+                stderr="",
+                success=True,
+            )
+        ]
+    )
 
 
 def _sse_chunk(delta: dict[str, Any], usage: dict[str, Any] | None = None) -> str:
@@ -431,6 +451,7 @@ class TestEngineStreaming:
         client = ToolCallingClient()
         agent = Agent(
             llm_client=client,
+            sandbox_backend=_mock_glob_backend(),
             config=self._make_config(stream=True),
             stream_events=StreamEvents(),
         )
@@ -444,7 +465,8 @@ class TestEngineStreaming:
     async def test_stream_off_uses_chat(self):
         """默认（stream 关）走 chat()，零回归。"""
         client = ToolCallingClient()
-        agent = Agent(llm_client=client, config=self._make_config(stream=False))
+        agent = Agent(llm_client=client, config=self._make_config(stream=False),
+                      sandbox_backend=_mock_glob_backend())
 
         await agent.run("do something")
 
@@ -454,7 +476,8 @@ class TestEngineStreaming:
     async def test_stream_on_without_events_uses_chat(self):
         """stream 开但未注入 events 时仍走 chat()。"""
         client = ToolCallingClient()
-        agent = Agent(llm_client=client, config=self._make_config(stream=True))
+        agent = Agent(llm_client=client, config=self._make_config(stream=True),
+                      sandbox_backend=_mock_glob_backend())
 
         await agent.run("do something")
 
@@ -472,6 +495,7 @@ class TestEngineStreaming:
         )
         agent = Agent(
             llm_client=client,
+            sandbox_backend=_mock_glob_backend(),
             config=self._make_config(stream=True),
             stream_events=events,
         )
@@ -516,6 +540,7 @@ class TestEngineStreaming:
         events = StreamEvents(on_tool_start=lambda name, args: starts.append(args))
         agent = Agent(
             llm_client=client,
+            sandbox_backend=_mock_glob_backend(),
             config=self._make_config(stream=True),
             stream_events=events,
         )
@@ -536,6 +561,7 @@ class TestEngineStreaming:
         )
         agent = Agent(
             llm_client=client,
+            sandbox_backend=_mock_glob_backend(),
             config=self._make_config(stream=False),
             stream_events=events,
         )
@@ -573,7 +599,8 @@ class TestEngineStreaming:
                     }
                 return {"content": "recovered", "tool_calls": None}
 
-        agent = Agent(llm_client=_BadArgsClient(), config=self._make_config(stream=False))
+        agent = Agent(llm_client=_BadArgsClient(), config=self._make_config(stream=False),
+                      sandbox_backend=_mock_glob_backend())
 
         result = await agent.run("do something")
 
@@ -609,6 +636,7 @@ class TestEngineStreaming:
 
         agent = Agent(
             llm_client=_StreamBoomClient(),
+            sandbox_backend=_mock_glob_backend(),
             config=self._make_config(stream=True),
             stream_events=StreamEvents(on_token=lambda text: None),
         )
@@ -632,6 +660,7 @@ class TestEngineStreaming:
         events = StreamEvents(on_tool_start=_boom)
         agent = Agent(
             llm_client=client,
+            sandbox_backend=_mock_glob_backend(),
             config=self._make_config(stream=True),
             stream_events=events,
         )
